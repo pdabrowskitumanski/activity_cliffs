@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.env
+
+# Cursor files
+.cursor/*
+!cursor/.gitkeep
+
+# macOS
+.DS_Store
+
+# Data directory contents
+data/*
+!data/.gitkeep
+
+# Results directory contents
+results/*
+!results/.gitkeep
+
+# Models directory contents (downloaded checkpoints)
+models/*
+!models/.gitkeep
+
+# logs directory contents
+logs/*
+!logs/.gitkeep
+
+# venv directory contents
+.venv/*
+!venv/.gitkeep

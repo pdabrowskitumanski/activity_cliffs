@@ -1,0 +1,26 @@
+{
+    "SARS_CoV2": {
+        "activity": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/postera_sars_cov_2_mpro/molecule_data_clean.csv",
+        "mmp": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/postera_sars_cov_2_mpro/MMP_data_clean.csv",
+        "smiles_column": "SMILES",
+        "activity_column": "f_avg_IC50 [uM]",
+        "unit": "uM",
+        "censor_threshold": 99
+    },
+    "ChEMBL_Dopamine_D2": {
+        "activity": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/chembl_dopamine_d2/molecule_data_clean.csv",
+        "mmp": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/chembl_dopamine_d2/MMP_data_clean.csv",
+        "smiles_column": "SMILES",
+        "activity_column": "Ki [nM]",
+        "unit": "nM",
+        "censor_threshold": null
+    },
+    "ChEMBL_Factor_Xa": {
+        "activity": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/chembl_factor_xa/molecule_data_clean.csv",
+        "mmp": "https://github.com/MarkusFerdinandDablander/QSAR-activity-cliff-experiments/blob/3081a1a40e3f5105a60b6d8b41f1ce69f8a0f453/data/chembl_factor_xa/MMP_data_clean.csv",
+        "smiles_column": "SMILES",
+        "activity_column": "Ki [nM]",
+        "unit": "nM",
+        "censor_threshold": null
+    }
+}

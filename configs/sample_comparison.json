@@ -1,0 +1,9 @@
+{
+    "name": "SARS_CoV2_morgan_chirality",
+    "description": "Morgan fingerprints with and without chirality on the SARS-CoV-2 dataset",
+    "dataset": "SARS_CoV2",
+    "configs": [
+        "results/SARS_CoV2/morgan_tanimoto",
+        "results/SARS_CoV2/morgan_tanimoto_chiral"
+    ]
+}

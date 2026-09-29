@@ -1,0 +1,11 @@
+{
+    "dataset": "SARS_CoV2",
+    "embeddings_file": "data/SARS_CoV2_embeddings.pkl",
+    "output_dir": "results/SARS_CoV2/morgan_tanimoto",
+    "embedding_method": "morgan",
+    "distance_metric": "tanimoto",
+    "n_compounds": null,
+    "activity_threshold": 1.0,
+    "similarity_threshold": null,
+    "seed": 42
+}
