@@ -2196,7 +2196,14 @@ def plot_pair_subset_three_panels(
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
             continue
-        counts, bin_edges = np.histogram(arr, bins=min(50, max(10, len(arr) // 5)))
+        n_bins = min(50, max(10, len(arr) // 5))
+        try:
+            counts, bin_edges = np.histogram(arr, bins=n_bins)
+        except ValueError:
+            # Values differ only by floating-point noise (e.g. stereoisomers with identical
+            # embeddings, similarity 1 ± 1e-16): too narrow a range for n_bins bins, so plot
+            # them as the single value they effectively are
+            counts, bin_edges = np.histogram(np.full(len(arr), np.mean(arr)), bins=n_bins)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         bin_widths = bin_edges[1:] - bin_edges[:-1]
         ax.bar(

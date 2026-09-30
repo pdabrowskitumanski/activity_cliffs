@@ -799,6 +799,9 @@ def create_pairwise_data(
     # Save distance matrices only
     np.save(analysis_dir / "structural_distance_matrix.npy", structural_distance_matrix)
     np.save(analysis_dir / "activity_distance_matrix.npy", activity_distance_matrix)
+    # Row/column order of both matrices
+    with open(analysis_dir / "matrix_inchi_keys.json", "w") as f:
+        json.dump(inchi_keys, f)
 
     console.print("[green]  ✓ Distance matrices built[/green]")
 
