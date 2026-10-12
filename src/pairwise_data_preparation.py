@@ -17,7 +17,7 @@ import pandas as pd
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
-from src.compound_similarity import calculate_vector_distance, get_scaling_function
+from src.compound_similarity import DISTANCE_UPPER_BOUNDS, calculate_vector_distance, get_scaling_function
 from src.fitting import fit_normal, fit_scaled_distances_bic_comparison
 from src.plotting import plot_distance_distributions, plot_distance_matrices
 from src.utils import convert_to_native_types
@@ -477,9 +477,14 @@ def _scale_distances(
     scaling_function: str,
     scaling_cutoff_percentile: int,
     console: Console | None = None,
+    distance_bound: float | None = None,
 ) -> tuple[np.ndarray | None, dict, dict, float | None, dict]:
     """
     Scale raw distances and update pairwise results.
+
+    Distances of a bounded metric (distance_bound given, e.g. 2 for cosine) are divided by the
+    bound; otherwise they are clipped at the scaling_cutoff_percentile percentile and scaled with
+    scaling_function.
 
     Args:
         raw_distances: Array of raw distance values.
@@ -487,6 +492,7 @@ def _scale_distances(
         scaling_function: Name of the scaling function to use.
         scaling_cutoff_percentile: Percentile to use for clipping distances.
         console: Console for printing progress messages.
+        distance_bound: Upper bound of the metric's distance, if it has one.
 
     Returns:
         Tuple of:
@@ -496,7 +502,7 @@ def _scale_distances(
         - Cutoff value (or None)
         - BIC comparison of Gaussian, Beta, Gamma, log-normal, Uniform (see ``fit_scaled_distances_bic_comparison``)
     """
-    if scaling_cutoff_percentile is None or len(raw_distances) == 0:
+    if distance_bound is None and (scaling_cutoff_percentile is None or len(raw_distances) == 0):
         # No scaling - set distance_scaled to same as distance_raw and calculate similarity
         for pair_data in pairwise_results.values():
             pair_data["distance_scaled"] = pair_data["distance_raw"]
@@ -508,23 +514,30 @@ def _scale_distances(
             console.print("[dim]  No scaling applied (scaling_cutoff_percentile not given)[/dim]")
         return None, {}, {}, None, {}
 
-    # Calculate cutoff value from raw distances
-    cutoff_value = float(np.percentile(raw_distances, scaling_cutoff_percentile))
-    if console:
-        console.print(f"  [dim]  Scaling cutoff (percentile {scaling_cutoff_percentile}): {cutoff_value:.6f}[/dim]")
+    if distance_bound is not None:
+        # Bounded metric: divide by the bound (clip only floating-point noise outside [0, bound])
+        cutoff_value = float(distance_bound)
+        if console:
+            console.print(f"  [dim]  Scaling: dividing by the metric's upper bound {cutoff_value:g}[/dim]")
+        scaled_distances = np.clip(raw_distances, 0.0, cutoff_value) / cutoff_value
+    else:
+        # Calculate cutoff value from raw distances
+        cutoff_value = float(np.percentile(raw_distances, scaling_cutoff_percentile))
+        if console:
+            console.print(f"  [dim]  Scaling cutoff (percentile {scaling_cutoff_percentile}): {cutoff_value:.6f}[/dim]")
 
-    # Get scaling function
-    scaler = get_scaling_function(scaling_function)
+        # Get scaling function
+        scaler = get_scaling_function(scaling_function)
 
-    # Scale distances: clip to cutoff, then scale, then set everything above cutoff to 1
-    clipped_distances = np.clip(raw_distances, None, cutoff_value)
-    scaled_clipped = scaler(clipped_distances)
+        # Scale distances: clip to cutoff, then scale, then set everything above cutoff to 1
+        clipped_distances = np.clip(raw_distances, None, cutoff_value)
+        scaled_clipped = scaler(clipped_distances)
 
-    # Create scaled distances array (same length as raw_distances)
-    scaled_distances = scaled_clipped.copy()
-    # Everything that was above cutoff gets value 1
-    above_cutoff_mask = raw_distances > cutoff_value
-    scaled_distances[above_cutoff_mask] = 1.0
+        # Create scaled distances array (same length as raw_distances)
+        scaled_distances = scaled_clipped.copy()
+        # Everything that was above cutoff gets value 1
+        above_cutoff_mask = raw_distances > cutoff_value
+        scaled_distances[above_cutoff_mask] = 1.0
 
     # Update pairwise_results with scaled distances and similarity
     valid_idx = 0
@@ -725,6 +738,7 @@ def create_pairwise_data(
         scaling_function,
         scaling_cutoff_percentile,
         console=console,
+        distance_bound=DISTANCE_UPPER_BOUNDS.get(distance_metric),
     )
 
     if scaled_bic_comparison:
@@ -759,6 +773,7 @@ def create_pairwise_data(
             else {},
         },
         "scaling": {
+            "method": "upper_bound" if distance_metric in DISTANCE_UPPER_BOUNDS else "percentile_cutoff",
             "scaling_function": scaling_function,
             "scaling_cutoff_percentile": scaling_cutoff_percentile,
             "cutoff_value": float(cutoff_value) if cutoff_value is not None else None,
@@ -853,7 +868,9 @@ def create_pairwise_data(
     if missing_pairs:
         console.print(f"  [yellow]Missing pairs: {len(missing_pairs)}[/yellow]")
     console.print(f"  Distance metric: {distance_metric}")
-    if scaling_cutoff_percentile is not None:
+    if distance_metric in DISTANCE_UPPER_BOUNDS:
+        console.print(f"  Scaling: divided by the upper bound {DISTANCE_UPPER_BOUNDS[distance_metric]:g}")
+    elif scaling_cutoff_percentile is not None:
         console.print(f"  Scaling function: {scaling_function} (cutoff: {scaling_cutoff_percentile}th percentile)")
     else:
         console.print(f"  Scaling function: None (no scaling applied)")

@@ -210,6 +210,11 @@ SIMILARITY_METRICS: dict[str, Callable[[np.ndarray, np.ndarray], float]] = {
 # Metrics that return similarity (need to be converted to distance via 1-value)
 SIMILARITY_BASED_METRICS = {"tanimoto", "dice", "cosine", "sokal_michener"}
 
+# Distance metrics with a known upper bound: their distances are scaled to [0, 1] by dividing by
+# the bound instead of by a percentile cutoff. Cosine distance 1 - cos lies in [0, 2]; Tanimoto
+# and Dice distances already lie in [0, 1] and are used unchanged.
+DISTANCE_UPPER_BOUNDS = {"cosine": 2.0, "tanimoto": 1.0, "dice": 1.0}
+
 
 def register_similarity_metric(
     name: str, func: Callable[[np.ndarray, np.ndarray], float]

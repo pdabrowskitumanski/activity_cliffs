@@ -106,6 +106,7 @@ Used with: `python activity_cliffs.py analyze <config_name>` (example: `configs/
 | `activity_threshold` | ❌ | Log ratio threshold for activity cliff definition | `1.0` |
 | `similarity_threshold` | ❌ | Similarity threshold for filtering pairs | `null` |
 | `seed` | ❌ | Random seed for data splits and model training | `42` |
+| `scaling_function` / `scaling_cutoff_percentile` | ❌ | Scaling of L1/L2 distances to [0, 1]: clipped at this percentile, then scaled | `"linear"` / `99` |
 
 \* Used when `analyze` computes Morgan fingerprints itself. With `embeddings_file`, they are taken from the file and can be omitted; if given, they must agree with it.
 
@@ -127,6 +128,8 @@ Used with: `python activity_cliffs.py analyze <config_name>` (example: `configs/
 | `chemeleon` | CheMeleon embedding (requires model download) |
 
 #### Distance Metrics
+
+Structural distances are brought to [0, 1] before analysis: Tanimoto and Dice distances are used as they are, cosine distance (1 − cos, in [0, 2]) is divided by 2, and L1/L2 distances, which have no upper bound, are clipped at their 99th percentile and divided by it. Similarity is 1 − scaled distance.
 
 | Metric | Description |
 |--------|-------------|

@@ -11,6 +11,7 @@ from scipy.optimize import curve_fit
 
 from src.chemistry import get_inchi_key
 from src.cliff_identification import identify_cliffs
+from src.compound_similarity import DISTANCE_UPPER_BOUNDS
 from src.correlation import correlate_similarity_vs_activity
 from src.datasets import DatasetSpec, add_log_activity_and_censoring, resolve_dataset
 from src.embeddings import get_embedding
@@ -200,6 +201,8 @@ def analyze_triple(config_name: str):
         "large_coords_to_trim": large_coords_to_trim,
         "scaling_function": scaling_function,
         "scaling_cutoff_percentile": scaling_cutoff_percentile,
+        "distance_scaling": (f"divide by upper bound {DISTANCE_UPPER_BOUNDS[distance_metric]:g}"
+                             if distance_metric in DISTANCE_UPPER_BOUNDS else "percentile cutoff"),
         "embeddings_file": config.get("embeddings_file"),
         "embedding_kwargs": embedding_kwargs,
         "seed": seed,

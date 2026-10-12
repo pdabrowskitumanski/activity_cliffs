@@ -57,8 +57,9 @@ def analyze(config_name: str) -> None:
     - similarity_threshold: (optional) Similarity threshold for filtering (default: None)
     - center: (optional) Whether to center embeddings by subtracting the mean (default: False)
     - large_coords_to_trim: (optional) If specified, trim embeddings to this number of coordinates (default: None)
-    - scaling_function: (optional) Function for scaling distances to [0, 1] (default: 'linear')
-    - scaling_cutoff_percentile: (optional) Percentile to use for clipping distances before scaling (default: 99)
+    - scaling_function: (optional) Function for scaling L1/L2 distances to [0, 1] (default: 'linear')
+    - scaling_cutoff_percentile: (optional) Percentile for clipping L1/L2 distances before scaling (default: 99).
+      Bounded metrics are not clipped: cosine distance is divided by 2, Tanimoto and Dice are used as is.
 
     See README.md for full configuration documentation.
     """
