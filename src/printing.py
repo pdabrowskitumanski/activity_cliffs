@@ -788,147 +788,6 @@ def create_persistent_homology_summary_markdown(
     return "\n".join(lines)
 
 
-def create_model_training_summary_markdown(results_dir: Path) -> str:
-    """
-    Create a markdown summary for the model training step.
-
-    Args:
-        results_dir: Path to the results directory containing model_training/.
-
-    Returns:
-        Markdown formatted string for the model training section.
-    """
-    model_dir = results_dir / "model_training"
-    
-    if not model_dir.exists():
-        return "## Step 5: Model Training\n\n*No model training results found.*\n"
-    
-    lines = [
-        "## Step 5: Model Training",
-    ]
-    
-    # Load split statistics
-    stats_file = model_dir / "split_statistics.json"
-    split_names = ["butina", "scaffold"]
-    if stats_file.exists():
-        with open(stats_file) as f:
-            stats = json.load(f)
-        
-        lines.extend([
-            "### Overview",
-            f"- **Activity threshold**: {stats.get('activity_threshold', 'N/A')}",
-            f"- **Random seed**: {stats.get('seed', 'N/A')}",
-        ])
-        # New format: per-split stats under "butina" / "scaffold"
-        if "butina" in stats and "scaffold" in stats:
-            for split_name in split_names:
-                s = stats.get(split_name, {})
-                lines.extend([
-                    f"### Data Splits ({split_name.capitalize()})",
-                    f"- **Train / Val / Test compounds**: {s.get('n_train_compounds', 'N/A'):,} / {s.get('n_val_compounds', 'N/A'):,} / {s.get('n_test_compounds', 'N/A'):,}",
-                    f"- **Train / Val / Test pairs (preliminary)**: {s.get('n_train_pairs_prelim', 'N/A'):,} / {s.get('n_val_pairs_prelim', 'N/A'):,} / {s.get('n_test_pairs_prelim', 'N/A'):,}",
-                    f"- **Train / Val / Test pairs (balanced)**: {s.get('n_train_pairs_balanced', 'N/A'):,} / {s.get('n_val_pairs_balanced', 'N/A'):,} / {s.get('n_test_pairs_balanced', 'N/A'):,}",
-                    f"- **Train cliffs / non-cliffs**: {s.get('train_n_cliffs', 'N/A'):,} / {s.get('train_n_non_cliffs', 'N/A'):,}",
-                    f"- **Val cliffs / non-cliffs**: {s.get('val_n_cliffs', 'N/A'):,} / {s.get('val_n_non_cliffs', 'N/A'):,}",
-                    f"- **Test cliffs / non-cliffs**: {s.get('test_n_cliffs', 'N/A'):,} / {s.get('test_n_non_cliffs', 'N/A'):,}",
-                ])
-        else:
-            lines.extend([
-                "### Data Splits",
-                f"- **Train compounds**: {stats.get('n_train_compounds', 'N/A'):,}",
-                f"- **Test compounds**: {stats.get('n_test_compounds', 'N/A'):,}",
-                f"- **Train pairs (preliminary)**: {stats.get('n_train_pairs_prelim', 'N/A'):,}",
-                f"- **Test pairs (preliminary)**: {stats.get('n_test_pairs_prelim', 'N/A'):,}",
-                f"- **Train pairs (balanced)**: {stats.get('n_train_pairs_balanced', 'N/A'):,}",
-                f"- **Test pairs (balanced)**: {stats.get('n_test_pairs_balanced', 'N/A'):,}",
-                "### Balanced Dataset Composition",
-                f"- **Train cliffs**: {stats.get('train_n_cliffs', 'N/A'):,}",
-                f"- **Train non-cliffs**: {stats.get('train_n_non_cliffs', 'N/A'):,}",
-                f"- **Test cliffs**: {stats.get('test_n_cliffs', 'N/A'):,}",
-                f"- **Test non-cliffs**: {stats.get('test_n_non_cliffs', 'N/A'):,}",
-            ])
-    
-    # Baseline metrics per split (butina/scaffold)
-    for split_name in split_names:
-        baseline_metrics_file = model_dir / f"baseline_model_metrics_{split_name}.json"
-        if baseline_metrics_file.exists():
-            with open(baseline_metrics_file) as f:
-                baseline_metrics = json.load(f)
-            title = f"Step 5c: Baseline Logistic Regression ({split_name.capitalize()})"
-            lines.extend([
-                f"### {title}",
-                "#### Performance Metrics",
-                f"- **Accuracy**: {format_stat(baseline_metrics.get('accuracy', 0))}",
-                f"- **Precision**: {format_stat(baseline_metrics.get('precision', 0))}",
-                f"- **Recall**: {format_stat(baseline_metrics.get('recall', 0))}",
-                f"- **F1-score**: {format_stat(baseline_metrics.get('f1', 0))}",
-                f"- **ROC-AUC**: {format_stat(baseline_metrics.get('roc_auc', 0))}",
-                f"- **Binary Cross-Entropy**: {format_stat(baseline_metrics.get('binary_cross_entropy', 0))}",
-            ])
-            coef_name = f"baseline_model_coefficients_{split_name}.json"
-            baseline_coefs_file = model_dir / coef_name
-            if baseline_coefs_file.exists():
-                with open(baseline_coefs_file) as f:
-                    baseline_coefs = json.load(f)
-                lines.extend([
-                    "#### Model Coefficients",
-                    f"- **Intercept**: {format_stat(baseline_coefs.get('intercept', 0))}",
-                    f"- **Coefficient (distance_scaled)**: {format_stat(baseline_coefs.get('coefficient', 0))}",
-                ])
-
-    for split_name in split_names:
-        xgboost_metrics_file = model_dir / f"xgboost_model_metrics_{split_name}.json"
-        if xgboost_metrics_file.exists():
-            with open(xgboost_metrics_file) as f:
-                xgboost_metrics = json.load(f)
-            lines.extend([
-                f"### Step 5d: XGBoost ({split_name.capitalize()})",
-                "Classifier on absolute embedding difference |emb₁ − emb₂| (same input representation as Siamese).",
-                "#### Performance Metrics",
-                f"- **Accuracy**: {format_stat(xgboost_metrics.get('accuracy', 0))}",
-                f"- **Precision**: {format_stat(xgboost_metrics.get('precision', 0))}",
-                f"- **Recall**: {format_stat(xgboost_metrics.get('recall', 0))}",
-                f"- **F1-score**: {format_stat(xgboost_metrics.get('f1', 0))}",
-                f"- **ROC-AUC**: {format_stat(xgboost_metrics.get('roc_auc', 0))}",
-                f"- **Binary Cross-Entropy**: {format_stat(xgboost_metrics.get('binary_cross_entropy', 0))}",
-            ])
-
-    for split_name in split_names:
-        siamese_metrics_file = model_dir / f"siamese_model_metrics_{split_name}.json"
-        if siamese_metrics_file.exists():
-            with open(siamese_metrics_file) as f:
-                siamese_metrics = json.load(f)
-            title = f"Step 5e: Siamese Network ({split_name.capitalize()})"
-            lines.extend([
-                f"### {title}",
-                "#### Performance Metrics",
-                f"- **Accuracy**: {format_stat(siamese_metrics.get('accuracy', 0))}",
-                f"- **Precision**: {format_stat(siamese_metrics.get('precision', 0))}",
-                f"- **Recall**: {format_stat(siamese_metrics.get('recall', 0))}",
-                f"- **F1-score**: {format_stat(siamese_metrics.get('f1', 0))}",
-                f"- **ROC-AUC**: {format_stat(siamese_metrics.get('roc_auc', 0))}",
-                f"- **Binary Cross-Entropy**: {format_stat(siamese_metrics.get('binary_cross_entropy', 0))}",
-            ])
-
-    # Output files table
-    lines.extend([
-        "### Output Files",
-        "| File | Description |",
-        "|------|-------------|",
-        "| `split_statistics.json` | Train/test split statistics and model metrics (both splits) |",
-        "| `train/val/test_compounds_{butina,scaffold}.csv` | Compound splits per split type |",
-        "| `train/val/test_pairs_{butina,scaffold}.csv` | Balanced train-train, val-val, test-test pair splits |",
-        "| `baseline_model_metrics_butina.json` / `_scaffold.json` | Baseline LR metrics per split |",
-        "| `baseline_model_coefficients_butina.json` / `_scaffold.json` | Baseline coefficients per split |",
-        "| `xgboost_model_metrics_butina.json` / `_scaffold.json` | XGBoost metrics per split |",
-        "| `xgboost_model_butina.json` / `xgboost_model_scaffold.json` | XGBoost model (native format) per split |",
-        "| `siamese_model_metrics_butina.json` / `_scaffold.json` | Siamese metrics per split |",
-        "| `siamese_model_butina.pt` / `siamese_model_scaffold.pt` | Trained Siamese state per split |",
-    ])
-    
-    return "\n".join(lines)
-
-
 def create_summary_markdown(
     results_dir: Path,
     dataset_name: str,
@@ -984,10 +843,6 @@ def create_summary_markdown(
     lines.append(create_persistent_homology_summary_markdown(results_dir))
     lines.append("---")
     
-    # Add model training section
-    lines.append(create_model_training_summary_markdown(results_dir))
-    lines.append("---")
-    
     # Final summary
     lines.extend([
         "## Summary",
@@ -1002,8 +857,6 @@ def create_summary_markdown(
         "and activity differences using conditional probability and Lipschitz statistics.",
         "4. **Persistent Homology**: Rips filtration by similarity; H0/H1/H2 persistence diagrams "
         "and long-lived component clusters.",
-        "5. **Model Training**: Trained baseline logistic regression and Siamese network models "
-        "to predict activity cliffs from molecular embeddings.",
         "---",
         "*Report generated by Activity Cliffs Analysis Pipeline*",
     ])

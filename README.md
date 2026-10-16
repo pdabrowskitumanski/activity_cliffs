@@ -307,20 +307,6 @@ Applies topological data analysis to understand the structure of activity cliffs
 - `doubly_filtrated_comparison.png` — How PH features change with threshold
 - `doubly_filtrated_stats.json` — Statistics across all slices
 
-#### Step 5: Model Training
-
-Trains contrastive learning models to predict activity cliffs from molecular embeddings.
-
-**What it does:**
-- Splits data into train/validation/test sets (7:2:1 ratio)
-- Trains neural network classifiers for different similarity thresholds
-- Evaluates accuracy, precision, recall, and F1 score on test set
-
-**Outputs (in `model_training/` subdirectory):**
-- `training_results.json` — Full training configuration and metrics
-- `accuracy_vs_threshold.csv` — Performance metrics for each threshold
-- `accuracy_vs_threshold.png` — Visualization of metrics vs threshold
-
 ### Output Structure
 
 All results are saved to `output_dir`, by default `results/<dataset>/<embedding>_<metric>_<hash>/`, where `<hash>` identifies the full analysis settings:
@@ -362,20 +348,16 @@ results/SARS_CoV2/morgan_tanimoto_1a2b3c4d/
 │   ├── binned_pearson_correlation.png
 │   ├── binned_cliff_probability.csv
 │   └── binned_cliff_probability.png
-├── persistent_homology/
-│   ├── singly_filtrated_dim0.csv
-│   ├── singly_filtrated_dim1.csv
-│   ├── singly_filtrated_diagram.png
-│   ├── singly_filtrated_stats.json
-│   ├── doubly_filtrated_sim0.3_dim0.csv
-│   ├── doubly_filtrated_sim0.3_diagram.png
-│   ├── ... (for each threshold)
-│   ├── doubly_filtrated_comparison.png
-│   └── doubly_filtrated_stats.json
-└── model_training/
-    ├── training_results.json
-    ├── accuracy_vs_threshold.csv
-    └── accuracy_vs_threshold.png
+└── persistent_homology/
+    ├── singly_filtrated_dim0.csv
+    ├── singly_filtrated_dim1.csv
+    ├── singly_filtrated_diagram.png
+    ├── singly_filtrated_stats.json
+    ├── doubly_filtrated_sim0.3_dim0.csv
+    ├── doubly_filtrated_sim0.3_diagram.png
+    ├── ... (for each threshold)
+    ├── doubly_filtrated_comparison.png
+    └── doubly_filtrated_stats.json
 ```
 
 ---
@@ -451,6 +433,38 @@ python activity_cliffs.py compare sample_comparison
 
 ---
 
+## 4. Cliff probe (standalone)
+
+`scripts/cliff_probe.py` is a separate analysis, not a pipeline step. It asks whether a
+representation lets a classifier decide, from the embeddings of two molecules alone, that the
+pair is an activity cliff, and it gives every representation the same pairs, labels, splits and
+model capacity so the answer is comparable across them.
+
+Pairs are matched molecular pairs, labelled by |ΔpK| against `--activity-threshold`; pairs whose
+label cannot be decided from censored measurements are dropped. Compounds are split by
+Bemis-Murcko scaffold, and each embedding is standardised and reduced by PCA to a shared number
+of dimensions before three fixed probes (logistic regression, a small MLP, k-nearest-neighbours)
+are trained on the pair features `[z_a + z_b, |z_a - z_b|]`.
+
+The two halves of that feature are also used on their own: `z_a + z_b` says where the pair sits
+in chemical space, `|z_a - z_b|` what structurally changed. Only the second is what a cliff
+predictor is meant to use. Two controls bound the result: the cliff rate among the nearest
+training compounds, which involves no learning, and the whole analysis repeated with activities
+permuted across compounds, which gives the AUC reachable by memorisation alone.
+
+### Usage
+
+```bash
+source .venv/bin/activate
+python scripts/cliff_probe.py SARS_CoV2
+python scripts/cliff_probe.py ChEMBL_Factor_Xa --n-compounds 1924   # match another dataset's size
+python scripts/cliff_probe.py SARS_CoV2 --drop-censored             # exclude capped measurements
+```
+
+Per-split AUCs are written to `results/<dataset>/cliff_probe*.csv` and summarised on screen.
+
+---
+
 ## Modules
 
 | Module | Description |
@@ -462,13 +476,13 @@ python activity_cliffs.py compare sample_comparison
 | `src/cliff_identification.py` | Activity cliff identification and statistics |
 | `src/correlation.py` | Correlation analysis and Lipschitz statistics |
 | `src/persistent_homology.py` | Topological data analysis with ripser |
-| `src/model_training.py` | Contrastive learning model for cliff prediction |
 | `src/plotting.py` | Visualization utilities |
 | `src/printing.py` | Markdown report generation |
 | `src/comparison.py` | Multi-run comparison |
 | `src/dataset_preparation.py` | Dataset preparation and embedding building |
 | `src/chemistry.py` | Chemistry utilities (InChI key generation) |
 | `src/utils.py` | General utilities (config loading) |
+| `scripts/cliff_probe.py` | Standalone activity-cliff probe (not part of the pipeline) |
 
 ---
 

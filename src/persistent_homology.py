@@ -1,11 +1,14 @@
 """
 Persistent homology on molecular pairs.
 
-Builds a Rips complex filtered by structural similarity: two molecules are connected
-by an edge at filtration level s if their log_ratio >= activity_threshold,
-status != 'excluded', and similarity < s. Persistence diagrams and statistics
-are computed; the most persistent clusters (persistence > threshold) are dumped
-for downstream use.
+Vietoris-Rips filtration of the cliff subspace: the vertices are the compounds involved in
+at least one activity cliff (log_ratio >= activity_threshold, status != 'excluded'), and two
+of them are joined by an edge at filtration value eps when their scaled structural distance
+is <= eps (all pairs of cliff compounds, not only cliff pairs). H0 is the standard
+0-dimensional persistence (all births 0; zero-length bars omitted), computed exactly from the
+minimum spanning forest of the distance matrix; it equals ripser's H0. Persistence diagrams
+and statistics are computed; the most persistent clusters (persistence > threshold) are
+dumped for downstream use.
 """
 
 import json
@@ -39,54 +42,96 @@ def _extract_compounds_from_pairwise_data(
     return compounds, compound_to_idx
 
 
-def _get_filtration_edges(
+def _cliff_compounds(
     pairwise_data: dict[str, dict],
     compound_to_idx: dict[str, int],
     activity_threshold: float,
-) -> list[tuple[int, int, float]]:
+) -> list[int]:
     """
-    Extract edges (i, j, similarity) for the filtration, with i < j.
-    Sorted by (similarity, i, j) to match ripser order. Only pairs satisfying
-    activity_threshold and status != 'excluded' are included.
+    Indices of compounds involved in at least one activity cliff: a pair with
+    log_ratio >= activity_threshold, status != 'excluded' and a finite similarity.
     """
-    edges = []
+    cliff = set()
     for pair_key, data in pairwise_data.items():
         if data.get("status") == "excluded":
             continue
         log_ratio = data.get("log_ratio", np.nan)
         if np.isnan(log_ratio) or log_ratio < activity_threshold:
             continue
-        sim = data.get("similarity", np.nan)
-        if np.isnan(sim):
+        if np.isnan(data.get("similarity", np.nan)):
             continue
         a, b = pair_key.split(",", 1)
-        i, j = compound_to_idx[a], compound_to_idx[b]
-        if i > j:
-            i, j = j, i
-        edges.append((i, j, float(sim)))
-    edges.sort(key=lambda x: (x[2], x[0], x[1]))
+        cliff.add(compound_to_idx[a])
+        cliff.add(compound_to_idx[b])
+    return sorted(cliff)
+
+
+def _cliff_distance_matrix(
+    pairwise_data: dict[str, dict],
+    compound_to_idx: dict[str, int],
+    cliff_indices: list[int],
+) -> np.ndarray:
+    """
+    Scaled structural distances between all pairs of cliff compounds (diagonal 0).
+    Uses 'distance_scaled'; for excluded pairs (both compounds censored), whose activity-based
+    fields are NaN, the structural distance 'distance_scaled_structure'. Pairs without a finite
+    distance are +inf (no edge).
+    """
+    position = {idx: k for k, idx in enumerate(cliff_indices)}
+    m = len(cliff_indices)
+    dist = np.full((m, m), np.inf)
+    np.fill_diagonal(dist, 0.0)
+    for pair_key, data in pairwise_data.items():
+        a, b = pair_key.split(",", 1)
+        pa, pb = position.get(compound_to_idx[a]), position.get(compound_to_idx[b])
+        if pa is None or pb is None:
+            continue
+        d = data.get("distance_scaled", np.nan)
+        if np.isnan(d):
+            d = data.get("distance_scaled_structure", np.nan)
+        if not np.isnan(d):
+            dist[pa, pb] = dist[pb, pa] = d
+    return dist
+
+
+def _minimum_spanning_forest(dist: np.ndarray) -> list[tuple[int, int, float]]:
+    """
+    Exact minimum spanning forest of a dense distance matrix (Prim's algorithm, O(m^2)).
+    Zero distances are ordinary edges; +inf marks a missing edge. Returns edges (i, j, w) with
+    i < j, sorted by (w, i, j). Its edge weights are exactly the H0 death values of the
+    Vietoris-Rips filtration of dist.
+    """
+    m = len(dist)
+    edges: list[tuple[int, int, float]] = []
+    in_tree = np.zeros(m, dtype=bool)
+    best = np.full(m, np.inf)
+    parent = np.full(m, -1)
+    for start in range(m):
+        if in_tree[start]:
+            continue
+        # grow one tree of the forest from `start`
+        best[start] = 0.0
+        while True:
+            candidates = np.where(~in_tree, best, np.inf)
+            v = int(np.argmin(candidates))
+            if not np.isfinite(candidates[v]):
+                break
+            in_tree[v] = True
+            if parent[v] >= 0:
+                u = int(parent[v])
+                edges.append((min(u, v), max(u, v), float(best[v])))
+            closer = ~in_tree & (dist[v] < best)
+            best[closer] = dist[v][closer]
+            parent[closer] = v
+    edges.sort(key=lambda e: (e[2], e[0], e[1]))
     return edges
 
 
-def _build_rips_sparse(edges: list[tuple[int, int, float]], n: int):
-    """
-    Build a sparse distance matrix for ripser from filtration edges.
-    Only finite edges are stored; missing entries are treated as infinity by ripser.
-    Diagonal is 0. Returns a scipy sparse matrix (CSR).
-    """
-    if len(edges) == 0:
-        return sparse.csr_matrix((n, n))
-    rows, cols, data = [], [], []
-    for i, j, sim in edges:
-        rows.extend([i, j])
-        cols.extend([j, i])
-        data.extend([sim, sim])
-    # Add diagonal zeros so each vertex exists
-    for i in range(n):
-        rows.append(i)
-        cols.append(i)
-        data.append(0.0)
-    return sparse.coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
+def _build_rips_sparse(dist: np.ndarray):
+    """Sparse distance matrix for ripser (finite entries only; missing entries are no edge)."""
+    finite = np.isfinite(dist)
+    rows, cols = np.nonzero(finite)
+    return sparse.coo_matrix((dist[finite], (rows, cols)), shape=dist.shape).tocsr()
 
 
 def _compute_persistence_statistics(dgms: list[np.ndarray]) -> dict:
@@ -142,7 +187,7 @@ def _compute_persistence_statistics(dgms: list[np.ndarray]) -> dict:
 
 
 def _filtration_stop_for_landscape(dgms: list[np.ndarray]) -> float:
-    """Upper bound for the landscape grid; similarity filtration lives in [0, 1]."""
+    """Upper bound for the landscape grid; the scaled-distance filtration lives in [0, 1]."""
     max_finite = 0.0
     for dgm in dgms:
         if len(dgm) == 0:
@@ -206,24 +251,33 @@ def _compute_H0_and_clusters(
     persistence_threshold: float,
 ) -> tuple[np.ndarray, list[dict]]:
     """
-    Run union-find along the edge filtration (edges already sorted by similarity).
+    Standard 0-dimensional persistence of an edge filtration (edges sorted by filtration value,
+    e.g. the minimum spanning forest edges), computed with union-find (path compression, union by rank).
+
+    Every vertex is born at 0. An edge (i, j, s) that joins two components ends exactly one
+    H0 class: the bar [0, s). Components that never merge give bars [0, inf). Zero-length bars
+    [0, 0) (edges at filtration value 0) are omitted, as in ripser, so the diagram equals
+    ripser's H0 diagram of the same sparse filtration.
+
     Returns (dgm0, persistent_clusters):
-    - dgm0: (N, 2) array of (birth, death) for H0 persistence diagram.
-    - persistent_clusters: list of clusters with persistence >= threshold or infinite.
+    - dgm0: (N, 2) array of (birth, death) for the H0 persistence diagram.
+    - persistent_clusters: components that end with persistence >= threshold (the member
+      compounds of the component absorbed at that merge), and all components that never merge.
     """
     parent = list(range(n))
     rank = [0] * n
-    birth_time = [0.0] * n
     root_to_nodes: list[set[int] | None] = [{i} for i in range(n)]
 
     diagram_points: list[tuple[float, float]] = []
 
     def find(x: int) -> int:
-        if parent[x] != x:
-            parent[x] = find(parent[x])
-        return parent[x]
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
 
-    def union(x: int, y: int, s: float) -> tuple[float, list[str]] | None:
+    def union(x: int, y: int) -> list[str] | None:
+        """Merge the components of x and y; return the members of the absorbed component."""
         rx, ry = find(x), find(y)
         if rx == ry:
             return None
@@ -231,30 +285,26 @@ def _compute_H0_and_clusters(
             rx, ry = ry, rx
         elif rank[rx] == rank[ry]:
             rank[rx] += 1
-        if birth_time[rx] < birth_time[ry]:
-            rx, ry = ry, rx
-        birth = birth_time[ry]
-        pers = s - birth
         inchi_keys = [compounds[idx] for idx in root_to_nodes[ry]]
-        diagram_points.append((birth, s))
         parent[ry] = rx
         root_to_nodes[rx] |= root_to_nodes[ry]
         root_to_nodes[ry] = None
-        birth_time[rx] = s
-        return (pers, inchi_keys)
+        return inchi_keys
 
     eps = 1e-9
     persistent_clusters: list[dict] = []
     for i, j, s in edges:
-        result = union(i, j, s)
-        if result is not None:
-            pers, inchi_keys = result
-            if pers >= persistence_threshold - eps:
-                persistent_clusters.append({
-                    "persistence": round(pers, 10),
-                    "inchi_keys": sorted(inchi_keys),
-                    "size": len(inchi_keys),
-                })
+        inchi_keys = union(i, j)
+        if inchi_keys is None:
+            continue
+        if s > 0:
+            diagram_points.append((0.0, s))
+        if s >= persistence_threshold - eps:
+            persistent_clusters.append({
+                "persistence": round(s, 10),
+                "inchi_keys": sorted(inchi_keys),
+                "size": len(inchi_keys),
+            })
 
     for idx in range(n):
         root = find(idx)
@@ -266,7 +316,7 @@ def _compute_H0_and_clusters(
             "inchi_keys": sorted(inchi_keys),
             "size": len(inchi_keys),
         })
-        diagram_points.append((birth_time[root], np.inf))
+        diagram_points.append((0.0, np.inf))
         root_to_nodes[root] = None
 
     dgm0 = np.array(diagram_points, dtype=np.float64) if diagram_points else np.zeros((0, 2))
@@ -288,15 +338,13 @@ def calculate_persistent_homology(
     """
     Compute persistent homology for the Rips complex defined by pairwise_data.
 
-    Two nodes (molecules) are joined by an edge at filtration level s if:
-    - pairwise_data[pair]['log_ratio'] >= activity_threshold
-    - pairwise_data[pair]['status'] != 'excluded'
-    - similarity < s (s is the filtration parameter; s=1 means only identical
-      compounds are connected)
+    Vertices are the compounds involved in at least one activity cliff
+    (pairwise_data[pair]['log_ratio'] >= activity_threshold, status != 'excluded'); two of them
+    are joined by an edge at filtration value eps when their scaled structural distance is <= eps.
 
-    When max_dim=0 (default), only H0 is computed via a single union-find pass
-    over edges (no full Rips complex), which is fast and sparse. For max_dim>0,
-    ripser is called with a sparse distance matrix.
+    When max_dim=0 (default), H0 is computed exactly from the minimum spanning forest of the
+    cliff compounds' distance matrix (Prim's algorithm) and a union-find pass over its edges.
+    For max_dim>0, ripser is called with the same distance matrix.
 
     Saves persistence diagrams (CSV), statistics (JSON), persistence landscape
     plots (Bubenik tent landscapes via persim), and a dump of the most persistent
@@ -330,18 +378,24 @@ def calculate_persistent_homology(
     ) as progress:
         task = progress.add_task("[cyan]Persistent homology...", total=4)
 
-        progress.console.print("[cyan]Step 4a: Extracting compounds and filtration edges...[/cyan]")
-        compounds, compound_to_idx = _extract_compounds_from_pairwise_data(pairwise_data)
+        progress.console.print("[cyan]Step 4a: Cliff compounds and their distance matrix...[/cyan]")
+        all_compounds, compound_to_idx = _extract_compounds_from_pairwise_data(pairwise_data)
+        cliff_indices = _cliff_compounds(pairwise_data, compound_to_idx, activity_threshold)
+        compounds = [all_compounds[i] for i in cliff_indices]
         n = len(compounds)
-        edges = _get_filtration_edges(
-            pairwise_data, compound_to_idx, activity_threshold
+        dist = _cliff_distance_matrix(pairwise_data, compound_to_idx, cliff_indices)
+        n_edges = int(np.isfinite(dist[np.triu_indices(n, k=1)]).sum())
+        n_missing = n * (n - 1) // 2 - n_edges
+        progress.console.print(
+            f"  {n:,} of {len(all_compounds):,} compounds in at least one cliff; "
+            f"{n_edges:,} pairwise distances" + (f" ({n_missing:,} undefined)" if n_missing else "")
         )
-        n_edges = len(edges)
         progress.update(task, advance=1)
 
         progress.console.print("[cyan]Step 4b: Computing H0 and persistent clusters...[/cyan]")
+        mst_edges = _minimum_spanning_forest(dist)
         dgm0, persistent_clusters = _compute_H0_and_clusters(
-            edges, n, compounds, persistence_threshold
+            mst_edges, n, compounds, persistence_threshold
         )
 
         if max_dim == 0:
@@ -349,7 +403,7 @@ def calculate_persistent_homology(
             progress.console.print("[cyan]H0-only mode: using union-find (no ripser).[/cyan]")
         else:
             progress.console.print("[cyan]Step 4b (cont.): Computing H1/H2 via ripser (sparse)...[/cyan]")
-            sparse_matrix = _build_rips_sparse(edges, n)
+            sparse_matrix = _build_rips_sparse(dist)
             result = ripser.ripser(
                 sparse_matrix, maxdim=max_dim, distance_matrix=True
             )
@@ -382,9 +436,12 @@ def calculate_persistent_homology(
             "activity_threshold": activity_threshold,
             "persistence_threshold": persistence_threshold,
             "max_dim": max_dim,
-            "n_compounds": len(compounds),
+            "filtration": "Vietoris-Rips on scaled structural distance among cliff compounds",
+            "n_compounds": len(all_compounds),
+            "n_cliff_compounds": n,
             "n_pairs_total": len(pairwise_data),
             "n_edges_in_filtration": n_edges,
+            "n_undefined_distances": n_missing,
             "statistics": stats,
             "n_persistent_clusters": len(persistent_clusters),
             "landscape_grid": {
@@ -414,7 +471,7 @@ def calculate_persistent_homology(
                 plot_persistence_landscape(
                     dgms_landscape,
                     output_path=ph_dir / "persistence_diagram.png",
-                    title="Persistence landscape (H0) — Rips by similarity",
+                    title="Persistence landscape (H0) — Rips on cliff compounds",
                     start=LANDSCAPE_START,
                     stop=landscape_stop,
                     num_steps=LANDSCAPE_NUM_STEPS,
@@ -424,7 +481,7 @@ def calculate_persistent_homology(
             plot_persistence_landscape(
                 dgms_landscape,
                 output_path=ph_dir / "persistence_diagram_all.png",
-                title="Persistence landscapes (H0, H1, …) — Rips by similarity",
+                title="Persistence landscapes (H0, H1, …) — Rips on cliff compounds",
                 start=LANDSCAPE_START,
                 stop=landscape_stop,
                 num_steps=LANDSCAPE_NUM_STEPS,
@@ -433,7 +490,7 @@ def calculate_persistent_homology(
                 plot_persistence_landscape(
                     [dgms_landscape[0]],
                     output_path=ph_dir / "persistence_diagram_H0.png",
-                    title="Persistence landscape (H0 only) — Rips by similarity",
+                    title="Persistence landscape (H0 only) — Rips on cliff compounds",
                     start=LANDSCAPE_START,
                     stop=landscape_stop,
                     num_steps=LANDSCAPE_NUM_STEPS,

@@ -155,6 +155,12 @@ def calculate_pairwise_distances(
                 "embedding1": embeddings_list[i],
                 "embedding2": embeddings_list[j],
             }
+            if status == "excluded":
+                # Structural distance is defined even when both activities are censored; kept
+                # separately (not used in statistics or scaling) for the persistent homology step
+                results[pair_key]["distance_raw_structure"] = calculate_vector_distance(
+                    embeddings_list[i], embeddings_list[j], metric=distance_metric
+                )
 
             # Track pairs with distance_raw == 0 (structurally identical) - only for non-excluded
             if status != "excluded" and distance == 0.0:
@@ -471,6 +477,34 @@ def _preprocess_embeddings(
     return embeddings
 
 
+def _scale_excluded_structural_distances(
+    pairwise_results: dict[str, dict],
+    scaling_function: str,
+    cutoff_value: float | None,
+    distance_bound: float | None,
+) -> None:
+    """
+    Scale the structural distances of excluded pairs (both compounds censored) with the same
+    transform as all other pairs, storing them as 'distance_scaled_structure'. Their
+    'distance_scaled' stays NaN, so statistics and the activity-based steps are unaffected.
+    Only pointwise transforms can be extended this way (upper bound, linear with cutoff, none);
+    for other scaling functions the value is NaN.
+    """
+    for pair_data in pairwise_results.values():
+        if "distance_raw_structure" not in pair_data:
+            continue
+        d = pair_data["distance_raw_structure"]
+        if distance_bound is not None:
+            scaled = min(max(d, 0.0), distance_bound) / distance_bound
+        elif cutoff_value is None:
+            scaled = d
+        elif scaling_function == "linear":
+            scaled = min(d, cutoff_value) / cutoff_value
+        else:
+            scaled = np.nan
+        pair_data["distance_scaled_structure"] = float(scaled)
+
+
 def _scale_distances(
     raw_distances: np.ndarray,
     pairwise_results: dict[str, dict[str, float]],
@@ -739,6 +773,10 @@ def create_pairwise_data(
         scaling_cutoff_percentile,
         console=console,
         distance_bound=DISTANCE_UPPER_BOUNDS.get(distance_metric),
+    )
+
+    _scale_excluded_structural_distances(
+        pairwise_results, scaling_function, cutoff_value, DISTANCE_UPPER_BOUNDS.get(distance_metric)
     )
 
     if scaled_bic_comparison:

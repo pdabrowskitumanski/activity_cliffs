@@ -25,7 +25,6 @@ from src.plotting import (
     plot_comparison_cliffs_5pct,
     plot_comparison_lipschitz_90,
     plot_comparison_persistence_mean_max,
-    plot_model_metrics_comparison_grouped,
     plot_persistence_landscape_l2_distance_heatmap,
     plot_persistence_landscape_l2_norm,
     plot_persistence_landscape_mean_and_variance,
@@ -135,12 +134,11 @@ def compare(config_name: str) -> None:
     sections.append(step_3_cliff_identification(config_data, output_dir, console))
     sections.append(step_4_correlation(config_data, output_dir, console))
     sections.append(step_5_persistence_homology(config_data, output_dir, console))
-    sections.append(step_6_model_performance(config_data, output_dir, console))
     # Generate extra comparison plots first so they exist for the summary
     extra_plots_section = generate_extra_comparison_plots(config_data, output_dir)
     if extra_plots_section:
         sections.append(extra_plots_section)
-    sections.append(step_7_summary(config_data, output_dir, console))
+    sections.append(step_6_summary(config_data, output_dir, console))
 
     # Assemble full markdown report and write to file
     generate_comparison_markdown(
@@ -1196,210 +1194,13 @@ def step_5_persistence_homology(
     return "\n".join(lines)
 
 
-def step_6_model_performance(
+def step_6_summary(
     config_data: list[dict], output_dir: Path, console: Console
 ) -> str:
     """
-    Step 6: Comparison of trained model performance across configurations.
-
-    Two subsections: Butina split and Scaffold split. Each has (1) split analysis table
-    (common, from first config), (2) three model sub-subsections: baseline, xgboost, siamese
-    with table per config (sorted by embedding) and bar plot (grouped by embedding, short labels).
+    Step 6: Summary table of best and worst config per category.
     """
-    console.print("[cyan]Step 6: Model performance comparison...[/cyan]")
-
-    # Collect split_statistics from first config that has it (for common split table)
-    first_stats = None
-    for cfg in config_data:
-        stats_file = cfg["path"] / "model_training" / "split_statistics.json"
-        if stats_file.exists():
-            with open(stats_file) as f:
-                first_stats = json.load(f)
-            break
-
-    # Per-split, per-model: collect metrics from each config (from stats[split][key])
-    split_names = ["butina", "scaffold"]
-    model_keys = [
-        ("baseline_model_metrics", "Baseline (logistic regression on scaled distance)"),
-        ("xgboost_model_metrics", "XGBoost (absolute difference of embeddings)"),
-        ("siamese_model_metrics", "Siamese network (absolute difference of embeddings)"),
-    ]
-    metric_names = ["accuracy", "precision", "recall", "f1", "roc_auc", "binary_cross_entropy"]
-
-    # Build per-split lists of metrics (sorted by embedding) for tables and plots
-    split_metrics: dict[str, dict[str, list[dict]]] = {}
-    for split_name in split_names:
-        split_metrics[split_name] = {}
-        for key, _ in model_keys:
-            list_for_model = []
-            for cfg in config_data:
-                stats_file = cfg["path"] / "model_training" / "split_statistics.json"
-                if not stats_file.exists():
-                    continue
-                with open(stats_file) as f:
-                    stats = json.load(f)
-                split_data = stats.get(split_name)
-                if not split_data:
-                    continue
-                metrics = (split_data or {}).get(key)
-                if not metrics:
-                    continue
-                rec = {
-                    "config_name": cfg["name"],
-                    "embedding_method": cfg["embedding_method"],
-                    "distance_metric": cfg["distance_metric"],
-                    **{k: v for k, v in metrics.items() if k in metric_names},
-                }
-                list_for_model.append(rec)
-            list_for_model.sort(key=lambda m: m["embedding_method"])
-            split_metrics[split_name][key] = list_for_model
-        if not any(split_metrics[split_name].values()):
-            continue
-
-    # Persist comparison json (flat structure for backward compatibility)
-    all_baseline = []
-    all_xgboost = []
-    all_siamese = []
-    for split_name in split_names:
-        for key in ["baseline_model_metrics", "xgboost_model_metrics", "siamese_model_metrics"]:
-            lst = split_metrics.get(split_name, {}).get(key, [])
-            if key == "baseline_model_metrics":
-                all_baseline.extend([{**m, "split": split_name} for m in lst])
-            elif key == "xgboost_model_metrics":
-                all_xgboost.extend([{**m, "split": split_name} for m in lst])
-            else:
-                all_siamese.extend([{**m, "split": split_name} for m in lst])
-    with open(output_dir / "model_training_comparison.json", "w") as f:
-        json.dump(
-            {"baseline_metrics": all_baseline, "xgboost_metrics": all_xgboost, "siamese_metrics": all_siamese},
-            f,
-            indent=2,
-        )
-
-    # Generate plots per split per model (grouped, short labels)
-    for split_name in split_names:
-        for key, _ in model_keys:
-            lst = split_metrics.get(split_name, {}).get(key, [])
-            if not lst:
-                continue
-            short_labels = [f"{m['embedding_method']} / {m['distance_metric']}" for m in lst]
-            model_type = key.replace("_model_metrics", "")
-            plot_model_metrics_comparison_grouped(
-                lst,
-                model_type,
-                output_dir,
-                split_name=split_name,
-                short_labels=short_labels,
-            )
-
-    lines = ["## 6. Model Performance", ""]
-    if not first_stats and not split_metrics:
-        lines.append("*No model training data found.*")
-        return "\n".join(lines)
-
-    # ROC AUC only: logistic regression, XGBoost, Siamese × Scaffold / Butina
-    roc_header = (
-        "| Embedding | Distance metric | LR (Scaffold) | LR (Butina) | "
-        "XGBoost (Scaffold) | XGBoost (Butina) | Siamese (Scaffold) | Siamese (Butina) |"
-    )
-    roc_sep = (
-        "|-----------|-----------------|---------------|-------------|"
-        "--------------------|----------------|--------------------|----------------|"
-    )
-    roc_rows: list[str] = []
-    for cfg in sorted(config_data, key=lambda c: c["embedding_method"]):
-        st = _read_json_if_exists(cfg["path"] / "model_training" / "split_statistics.json") or {}
-
-        def _roc_auc(split_key: str, model_key: str) -> str:
-            block = (st.get(split_key) or {}).get(model_key) or {}
-            v = block.get("roc_auc")
-            return format_stat(float(v)) if v is not None else "—"
-
-        roc_rows.append(
-            "| "
-            + " | ".join([
-                cfg["embedding_method"],
-                cfg["distance_metric"],
-                _roc_auc("scaffold", "baseline_model_metrics"),
-                _roc_auc("butina", "baseline_model_metrics"),
-                _roc_auc("scaffold", "xgboost_model_metrics"),
-                _roc_auc("butina", "xgboost_model_metrics"),
-                _roc_auc("scaffold", "siamese_model_metrics"),
-                _roc_auc("butina", "siamese_model_metrics"),
-            ])
-            + " |"
-        )
-    lines.extend([
-        "### ROC AUC (test sets)",
-        "",
-        roc_header,
-        roc_sep,
-        *roc_rows,
-        "",
-    ])
-
-    for split_name in split_names:
-        split_data = (first_stats or {}).get(split_name)
-        lines.extend([f"### {split_name.capitalize()} split", ""])
-
-        # Split analysis table (common to all configs)
-        if split_data:
-            def _fmt(v):
-                return f"{v:,}" if isinstance(v, int) else (str(v) if v is not None else "—")
-            lines.extend([
-                "#### Split analysis",
-                "",
-                "| n_train_compounds | n_val_compounds | n_test_compounds | n_train_pairs_balanced | n_val_pairs_balanced | n_test_pairs_balanced |",
-                "|-------------------|-----------------|------------------|------------------------|----------------------|-----------------------|",
-                "| "
-                + " | ".join([
-                    _fmt(split_data.get("n_train_compounds")),
-                    _fmt(split_data.get("n_val_compounds")),
-                    _fmt(split_data.get("n_test_compounds")),
-                    _fmt(split_data.get("n_train_pairs_balanced")),
-                    _fmt(split_data.get("n_val_pairs_balanced")),
-                    _fmt(split_data.get("n_test_pairs_balanced")),
-                ])
-                + " |",
-                "",
-            ])
-        else:
-            lines.append("*Split statistics not available.*")
-            lines.append("")
-
-        # Three model sub-subsections: table + plot
-        for key, model_title in model_keys:
-            lst = split_metrics.get(split_name, {}).get(key, [])
-            model_type = key.replace("_model_metrics", "")
-            if not lst:
-                continue
-            lines.extend([f"#### {model_title}", ""])
-            # Table: Embedding | Distance metric | accuracy | precision | ... (sorted by embedding)
-            headers = ["Embedding", "Distance metric"] + [m.replace("_", " ").title() for m in metric_names]
-            lines.append("| " + " | ".join(headers) + " |")
-            lines.append("|" + "|".join(["---"] * len(headers)) + "|")
-            for m in lst:
-                cells = [
-                    m["embedding_method"],
-                    m["distance_metric"],
-                    *[format_stat(m.get(k)) if m.get(k) is not None else "—" for k in metric_names],
-                ]
-                lines.append("| " + " | ".join(str(c) for c in cells) + " |")
-            lines.append("")
-            img_name = f"{split_name}_{model_type}_model_metrics_comparison.png"
-            lines.extend([f"![{model_title}]({img_name})", ""])
-
-    lines.append("See `model_training_comparison.json` for detailed metrics.")
-    return "\n".join(lines)
-
-
-def step_7_summary(
-    config_data: list[dict], output_dir: Path, console: Console
-) -> str:
-    """
-    Step 7: Summary table of best and worst config per category.
-    """
-    console.print("[cyan]Step 7: Summary...[/cyan]")
+    console.print("[cyan]Step 6: Summary...[/cyan]")
     sorted_configs = sorted(config_data, key=lambda c: c["embedding_method"])
 
     def _label(cfg: dict) -> str:
@@ -1581,55 +1382,7 @@ def step_7_summary(
     if vals:
         rows.append(("Persistence homology mean persistence", vals, False))
 
-    # 14–16) Scaffold: baseline, xgboost, siamese accuracy - best=highest
-    for split_name, model_key, title in [
-        ("scaffold", "baseline_model_metrics", "Best scaffold logistic regression"),
-        ("scaffold", "xgboost_model_metrics", "Best scaffold XGBoost"),
-        ("scaffold", "siamese_model_metrics", "Best scaffold Siamese Network"),
-    ]:
-        vals = []
-        for cfg in sorted_configs:
-            p = cfg["path"] / "model_training" / "split_statistics.json"
-            if not p.exists():
-                continue
-            d = json.load(open(p))
-            split_data = d.get(split_name)
-            if not split_data:
-                continue
-            m = (split_data or {}).get(model_key)
-            if not m:
-                continue
-            acc = m.get("accuracy")
-            if acc is not None:
-                vals.append((_label(cfg), float(acc)))
-        if vals:
-            rows.append((title, vals, False))
-
-    # 17–19) Butina: baseline, xgboost, siamese accuracy - best=highest
-    for split_name, model_key, title in [
-        ("butina", "baseline_model_metrics", "Best butina logistic regression"),
-        ("butina", "xgboost_model_metrics", "Best butina XGBoost"),
-        ("butina", "siamese_model_metrics", "Best butina Siamese Network"),
-    ]:
-        vals = []
-        for cfg in sorted_configs:
-            p = cfg["path"] / "model_training" / "split_statistics.json"
-            if not p.exists():
-                continue
-            d = json.load(open(p))
-            split_data = d.get(split_name)
-            if not split_data:
-                continue
-            m = (split_data or {}).get(model_key)
-            if not m:
-                continue
-            acc = m.get("accuracy")
-            if acc is not None:
-                vals.append((_label(cfg), float(acc)))
-        if vals:
-            rows.append((title, vals, False))
-
-    lines = ["## 7. Summary", "", "### Best and worst config by category", ""]
+    lines = ["## 6. Summary", "", "### Best and worst config by category", ""]
     lines.append("| Category | Best | Worst |")
     lines.append("|----------|------|-------|")
 

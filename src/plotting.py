@@ -2732,64 +2732,6 @@ def plot_cliff_sets_dice_similarity_heatmap(
     plt.close()
 
 
-def plot_model_metrics_comparison_grouped(
-    metrics_list: list[dict],
-    model_type: str,
-    output_dir: Path,
-    *,
-    split_name: str | None = None,
-    short_labels: list[str] | None = None,
-) -> None:
-    """
-    Plot model metrics as bar charts: one bar per config, colored by embedding, configs ordered
-    so same embedding are grouped. Uses short_labels on x-axis for readability.
-    """
-    if not metrics_list:
-        return
-    if short_labels is None:
-        short_labels = [f"{m['embedding_method']} / {m['distance_metric']}" for m in metrics_list]
-    assert len(short_labels) == len(metrics_list)
-
-    metric_names = ["accuracy", "precision", "recall", "f1", "roc_auc", "binary_cross_entropy"]
-    unique_embeddings = sorted(set(m["embedding_method"] for m in metrics_list))
-    tab10_colors = plt.cm.tab10.colors
-    embedding_to_color = {emb: tab10_colors[i % len(tab10_colors)] for i, emb in enumerate(unique_embeddings)}
-
-    n_configs = len(metrics_list)
-    x = np.arange(n_configs)
-    width = 0.75
-
-    fig, axes = plt.subplots(2, 3, figsize=(max(14, n_configs * 1.2), 10))
-    title = f"{model_type.replace('_', ' ').title()} Model Metrics"
-    if split_name:
-        title = f"{split_name.capitalize()} split — {title}"
-    fig.suptitle(title, fontsize=16, fontweight="bold")
-    axes = axes.flatten()
-
-    for idx, metric_name in enumerate(metric_names):
-        ax = axes[idx]
-        values = [m.get(metric_name, np.nan) for m in metrics_list]
-        colors = [embedding_to_color[m["embedding_method"]] for m in metrics_list]
-        bars = ax.bar(x, values, width, color=colors, alpha=0.85, edgecolor="gray", linewidth=0.5)
-        ax.set_xlabel("Configuration", fontsize=11)
-        ax.set_ylabel(metric_name.replace("_", " ").title(), fontsize=11)
-        ax.set_title(metric_name.replace("_", " ").title(), fontsize=12)
-        ax.grid(True, alpha=0.3, axis="y")
-        ax.set_xticks(x)
-        ax.set_xticklabels(short_labels, rotation=45, ha="right", fontsize=9)
-        ax.tick_params(axis="both", labelsize=9)
-
-    handles = [
-        plt.Rectangle((0, 0), 1, 1, facecolor=embedding_to_color[emb], alpha=0.85, label=emb)
-        for emb in unique_embeddings
-    ]
-    fig.legend(handles=handles, loc="upper right", bbox_to_anchor=(0.98, 0.98), fontsize=11)
-    plt.tight_layout()
-    fname = f"{split_name}_{model_type}_model_metrics_comparison.png" if split_name else f"{model_type}_model_metrics_comparison.png"
-    plt.savefig(output_dir / fname, dpi=300, bbox_inches="tight")
-    plt.close()
-
-
 def plot_persistence_landscape_l2_distance_heatmap(
     config_labels: list[str],
     distance_matrix: np.ndarray,

@@ -15,7 +15,6 @@ from src.compound_similarity import DISTANCE_UPPER_BOUNDS
 from src.correlation import correlate_similarity_vs_activity
 from src.datasets import DatasetSpec, add_log_activity_and_censoring, resolve_dataset
 from src.embeddings import get_embedding
-from src.model_training import train_model
 from src.pairwise_data_preparation import create_pairwise_data
 from src.persistent_homology import calculate_persistent_homology
 from src.printing import save_summary_markdown
@@ -259,17 +258,7 @@ def analyze_triple(config_name: str):
         activity_threshold=activity_threshold,
     )
 
-    # Step 5: Model training
-    train_model(
-        compounds=df,
-        pairwise_data=pairwise_data,
-        activity_threshold=activity_threshold,
-        results_dir=results_dir,
-        seed=seed,
-        config=config,
-    )
-
-    # Step 6: Save summary markdown
+    # Step 5: Save summary markdown
     save_summary_markdown(
         results_dir=results_dir,
         dataset_name=dataset_name,
