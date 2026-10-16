@@ -719,10 +719,10 @@ def create_persistent_homology_summary_markdown(
         l2_h0 = l2_map.get("dim_0")
         if l2_h0 is not None:
             lines.append(f"- **Persistence landscape L2 norm** (H0): {format_stat(l2_h0)}")
-        pe0 = dim0.get("persistent_entropy")
+        pe0 = dim0.get("persistent_entropy_shannon")
         if pe0 is not None:
             lines.append(
-                f"- **Persistent entropy** Σ (p_i log p_i) over finite lifetimes (H0): {format_stat(pe0)}"
+                f"- **Persistent entropy** (Shannon, −Σ p_i ln p_i over finite lifetimes, H0): {format_stat(pe0)}"
             )
         lines.append("")
 

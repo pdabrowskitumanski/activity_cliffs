@@ -297,7 +297,7 @@ def calculate_binned_cliff_probability(
     bin_width: float = 0.05,
 ) -> pd.DataFrame:
     """
-    Calculate probability of log_ratio > activity_threshold for each similarity bin.
+    Calculate probability of log_ratio >= activity_threshold for each similarity bin.
 
     Pairs with status='excluded' are filtered out from the analysis.
 
@@ -313,7 +313,7 @@ def calculate_binned_cliff_probability(
             - 'bin_lower': lower bound of the bin
             - 'bin_upper': upper bound of the bin
             - 'n_pairs': number of pairs in the bin
-            - 'n_cliffs': number of pairs with log_ratio > activity_threshold
+            - 'n_cliffs': number of pairs with log_ratio >= activity_threshold
             - 'cliff_probability': probability of being an activity cliff
     """
     bins = _create_similarity_bins(bin_width)
@@ -328,7 +328,7 @@ def calculate_binned_cliff_probability(
         bin_center = (lower + upper) / 2
 
         # Count activity cliffs
-        n_cliffs = sum(1 for d in pairs_in_bin if d["log_ratio"] > activity_threshold)
+        n_cliffs = sum(1 for d in pairs_in_bin if d["log_ratio"] >= activity_threshold)
         cliff_probability = n_cliffs / n_pairs if n_pairs > 0 else 0.0
 
         rows.append({
@@ -820,7 +820,7 @@ def correlate_similarity_vs_activity(
                     if np.isnan(data.get("log_ratio", np.nan)):
                         continue
                     all_chiral_pair_keys.append(pair_key)
-                    if data["log_ratio"] > activity_threshold:
+                    if data["log_ratio"] >= activity_threshold:
                         chiral_pair_keys.append(pair_key)
                     break
 
@@ -986,7 +986,7 @@ def correlate_similarity_vs_activity(
                         if np.isnan(data.get("log_ratio", np.nan)):
                             continue
                         all_mmp_matched.add(pair_key)
-                        if data["log_ratio"] > activity_threshold:
+                        if data["log_ratio"] >= activity_threshold:
                             mmp_pair_keys.append(pair_key)
                         break
                 n_total_mmp_pairs = len(all_mmp_matched)

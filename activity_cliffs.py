@@ -1,9 +1,9 @@
 import os
 import sys
 
-# On macOS, torch, scikit-learn, diptest and XGBoost each bundle their own OpenMP runtime.
-# Running several of them multithreaded in one process segfaults XGBoost or deadlocks torch,
-# so default to a single OpenMP thread there. Must be set before those libraries are imported.
+# On macOS, torch, scikit-learn and diptest each bundle their own OpenMP runtime. Running
+# several of them multithreaded in one process deadlocks torch, so default to a single OpenMP
+# thread there. Must be set before those libraries are imported.
 if sys.platform == "darwin":
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 

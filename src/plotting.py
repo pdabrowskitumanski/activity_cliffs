@@ -2492,7 +2492,7 @@ def plot_binned_cliff_probability(
         markersize=6,
         markerfacecolor="white",
         markeredgewidth=2,
-        label=f"P(log_ratio > {activity_threshold})",
+        label=f"P(log_ratio >= {activity_threshold})",
         zorder=3,
     )
     

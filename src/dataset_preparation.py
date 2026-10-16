@@ -275,6 +275,7 @@ def prepare_dataset(config_name: str) -> pd.DataFrame:
     # UMAP parameters
     umap_n_neighbors = config.get("umap_n_neighbors", 15)
     umap_min_dist = config.get("umap_min_dist", 0.1)
+    seed = config.get("seed", 42)
     
     shift = UNIT_SHIFTS[unit]
     input_path = spec.csv_path
@@ -607,7 +608,7 @@ def prepare_dataset(config_name: str) -> pd.DataFrame:
                 n_components=2,
                 n_neighbors=umap_n_neighbors,
                 min_dist=umap_min_dist,
-                random_state=42,
+                random_state=seed,
                 n_jobs=1,
             )
             projection = reducer.fit_transform(embeddings)

@@ -401,19 +401,26 @@ def _append_chiral_mmp_comparison_table(
     *,
     include_zero_distance: bool,
 ) -> None:
-    """Per-config table: pair counts, Beta-fit m, f, variance, CV; chiral adds scaled-distance-zero stats."""
+    """
+    Per-config table: pair counts, the Beta concentration f, and the fitted mean, variance and CV
+    on the scaled-distance axis; chiral adds scaled-distance-zero stats.
+
+    The Beta MLE runs on distances linearly mapped to (0, 1) by the subset's own min and max, so
+    its raw moments sit on a per-configuration axis. The moments reported here are mapped back to
+    the distance axis and are therefore comparable between configurations.
+    """
     sorted_configs = sorted(config_data, key=lambda c: c["embedding_method"])
     if include_zero_distance:
         header = (
-            "| Embedding | Distance metric | N total pairs | N cliff pairs | m | f | Variance | CV | "
+            "| Embedding | Distance metric | N total pairs | N cliff pairs | Mean distance | f | Variance | CV | "
             "N dist_scaled=0 | Fraction dist_scaled=0 (%) |"
         )
-        sep = "|-----------|-----------------|---------------|---------------|---|---|----------|----|------------------|---------------------------|"
+        sep = "|-----------|-----------------|---------------|---------------|---------------|---|----------|----|------------------|---------------------------|"
     else:
         header = (
-            "| Embedding | Distance metric | N total pairs | N cliff pairs | m | f | Variance | CV |"
+            "| Embedding | Distance metric | N total pairs | N cliff pairs | Mean distance | f | Variance | CV |"
         )
-        sep = "|-----------|-----------------|---------------|---------------|---|---|----------|----|"
+        sep = "|-----------|-----------------|---------------|---------------|---------------|---|----------|----|"
 
     row_lines: list[str] = []
     for cfg in sorted_configs:
@@ -425,10 +432,11 @@ def _append_chiral_mmp_comparison_table(
         n_tot = d.get("n_total_pairs")
         n_cl = d.get("n_pairs")
         beta = d.get("distance_beta_fit") or {}
-        m = beta.get("m")
+        # Distance-axis moments; older runs predate them and only carry the normalised-axis ones
+        m = beta.get("mean_distance")
         fpar = beta.get("f")
-        var = beta.get("variance")
-        cv = beta.get("cv")
+        var = beta.get("variance_distance")
+        cv = beta.get("cv_distance")
         n_tot_s = f"{int(n_tot):,}" if isinstance(n_tot, int) else ("—" if n_tot is None else str(n_tot))
         n_cl_s = f"{int(n_cl):,}" if isinstance(n_cl, int) else ("—" if n_cl is None else str(n_cl))
         cells = [
@@ -953,11 +961,14 @@ def step_4_correlation(
     lines.extend([
         "### KWW survival fit and theoretical moments (Lipschitz)",
         "",
-        "Kohlrausch–Williams–Watts decay on the empirical survival of regularized Lipschitz values; "
-        "theoretical mean and 95th percentile follow the Weibull interpretation (see single-run correlation report).",
+        "Kohlrausch–Williams–Watts decay a·exp(-k·r^b) fitted to the histogram density of the "
+        "regularized Lipschitz values, truncated at the 99th percentile. The Mean E[r] and r95 columns "
+        "follow the Weibull-survival interpretation of (a, k, b); see the single-run correlation report. "
+        "'b at bound' marks fits whose stretch exponent landed on the optimiser's bound and is therefore "
+        "not determined by the data.",
         "",
-        "| Embedding | Distance metric | a | k | b | Mean E[r] | r95 | R² |",
-        "|-----------|-----------------|---|---|---|-----------|-----|-----|",
+        "| Embedding | Distance metric | a | k | b | b at bound | Mean E[r] | r95 | R² |",
+        "|-----------|-----------------|---|---|---|------------|-----------|-----|-----|",
     ])
     for s in sorted_summaries:
         kww = s.get("kww_fit") or {}
@@ -973,6 +984,7 @@ def step_4_correlation(
                 format_stat(a) if a is not None else "—",
                 format_stat(k) if k is not None else "—",
                 format_stat(b) if b is not None else "—",
+                ("yes" if kww.get("b_at_bound") else "no") if kww.get("b_at_bound") is not None else "—",
                 format_stat(mean_er) if mean_er is not None else "—",
                 format_stat(r95) if r95 is not None else "—",
                 format_stat(r2) if r2 is not None else "—",
@@ -1067,7 +1079,8 @@ def step_5_persistence_homology(
             l2 = ((pdata.get("landscape_l2_norm") or {}).get("dim_0"))
         mp = dim0.get("mean_persistence")
         mx = dim0.get("max_persistence")
-        ent = dim0.get("persistent_entropy")
+        # Shannon entropy H = -sum p_i ln p_i (non-negative); the signed sum is also stored
+        ent = dim0.get("persistent_entropy_shannon")
         lines.append(
             "| "
             + " | ".join([

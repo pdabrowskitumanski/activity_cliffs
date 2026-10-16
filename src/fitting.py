@@ -36,6 +36,13 @@ def _calculate_aic_bic(log_likelihood: float, n_params: int, n_samples: int) -> 
     return float(aic), float(bic)
 
 
+# Bounds on the KWW stretch exponent b. The upper bound is deliberately far above the range the
+# data call for (observed: 1.5-3.6), so that a fitted b is a property of the distribution rather
+# than of the optimiser; fit_kww_decay reports 'b_at_bound' when a fit lands on either bound.
+KWW_B_MIN = 0.01
+DEFAULT_KWW_B_MAX = 10.0
+
+
 def _create_histogram_density(
     values: np.ndarray, n_bins: int = 50
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -110,13 +117,25 @@ def fit_beta_distance(
     are the min and max of the same subset used for the histogram (values up to
     ``percentile_cutoff``).
 
-    Reports:
+    The fit is performed on ``u`` because Beta has support [0, 1] and its MLE is ill-behaved at
+    the endpoints, which the raw distances hit whenever a subset contains pairs at distance 0.
+    Because ``lo`` and ``hi`` differ between configurations, the moments of ``u`` are not
+    comparable across them, so the moments are also mapped back to the distance axis.
+
+    Reports, on the normalised axis ``u``:
         - ``a``, ``b``: fitted Beta shape parameters
-        - ``m = a / (a + b)`` (mean on the scaled axis)
+        - ``m = a / (a + b)`` (mean of ``u``)
         - ``f = a + b`` (concentration / sample-size analogue)
-        - ``variance = m (1 - m) / (f + 1)`` (Beta theoretical variance)
-        - ``std``: square root of ``variance``
-        - ``cv = std / m`` (coefficient of variation of the Beta mean; ``m > 0``)
+        - ``variance = m (1 - m) / (f + 1)``, ``std``, ``cv = std / m``
+
+    and on the distance axis (these are the comparable ones):
+        - ``mean_distance = lo + m (hi - lo)``
+        - ``variance_distance = variance (hi - lo)^2``, ``std_distance = std (hi - lo)``
+        - ``cv_distance = std_distance / mean_distance``
+
+    Note that ``cv_distance`` equals ``cv`` exactly when ``lo = 0`` (a subset containing pairs at
+    distance 0, as for fingerprints that do not separate stereoisomers) and is strictly smaller
+    when ``lo > 0``.
 
     Args:
         distances: Array of nonnegative scaled distances (e.g. ``distance_scaled``; finite).
@@ -134,6 +153,10 @@ def fit_beta_distance(
         "variance": None,
         "std": None,
         "cv": None,
+        "mean_distance": None,
+        "variance_distance": None,
+        "std_distance": None,
+        "cv_distance": None,
         "r_squared": None,
         "scale_lo": None,
         "scale_hi": None,
@@ -183,6 +206,17 @@ def fit_beta_distance(
     std = float(np.sqrt(variance)) if variance >= 0 else None
     cv = float(std / m) if std is not None and m > 1e-15 else None
 
+    # Same moments on the distance axis, where they are comparable between configurations
+    span_scale = hi - lo
+    mean_distance = float(lo + m * span_scale)
+    variance_distance = float(variance * span_scale * span_scale)
+    std_distance = float(std * span_scale) if std is not None else None
+    cv_distance = (
+        float(std_distance / mean_distance)
+        if std_distance is not None and mean_distance > 1e-15
+        else None
+    )
+
     # R²: observed vs expected bin counts under Beta on the distance scale
     counts, bin_edges = np.histogram(filtered, bins=n_bins)
     expected = np.zeros_like(counts, dtype=float)
@@ -209,6 +243,10 @@ def fit_beta_distance(
         "variance": variance,
         "std": std,
         "cv": cv,
+        "mean_distance": mean_distance,
+        "variance_distance": variance_distance,
+        "std_distance": std_distance,
+        "cv_distance": cv_distance,
         "r_squared": r_squared,
         "scale_lo": lo,
         "scale_hi": hi,
@@ -508,18 +546,22 @@ def fit_kww_decay(
     values: np.ndarray,
     n_bins: int = 50,
     percentile_cutoff: float = 99.0,
+    b_max: float = DEFAULT_KWW_B_MAX,
 ) -> tuple[dict, np.ndarray, np.ndarray]:
     """
     Fit Kohlrausch-Williams-Watts decay a*exp(-k*x**b) to the distribution of values.
-    
+
     Args:
         values: Array of values to fit.
         n_bins: Number of bins for histogram.
         percentile_cutoff: Percentile cutoff for fitting (excludes outliers).
-    
+        b_max: Upper bound on the stretch exponent b. Chosen well above the values the data
+            call for, so that b is not silently pinned to the bound; 'b_at_bound' in the
+            returned parameters flags the cases where it still is.
+
     Returns:
         Tuple of (fit_params, bin_centers, fitted_values) where:
-        - fit_params: dict with 'a', 'k', 'b', and fitting statistics
+        - fit_params: dict with 'a', 'k', 'b', 'b_at_bound', and fitting statistics
         - bin_centers: array of bin centers used for fitting
         - fitted_values: array of fitted values at bin_centers
     """
@@ -532,6 +574,7 @@ def fit_kww_decay(
             "a": 0.0,
             "k": 0.0,
             "b": 1.0,
+            "b_at_bound": False,
             "r_squared": 0.0,
             "percentile_cutoff": percentile_cutoff,
             "n_values_used": len(filtered_values),
@@ -545,6 +588,7 @@ def fit_kww_decay(
             "a": 0.0,
             "k": 0.0,
             "b": 1.0,
+            "b_at_bound": False,
             "r_squared": 0.0,
             "percentile_cutoff": percentile_cutoff,
             "n_values_used": len(filtered_values),
@@ -561,7 +605,7 @@ def fit_kww_decay(
             bin_centers, 
             density,
             p0=[a0, k0, b0],
-            bounds=([0, 0, 0.01], [np.inf, np.inf, 2.0]),  # Allow b between 0.01 and 2.0
+            bounds=([0, 0, KWW_B_MIN], [np.inf, np.inf, b_max]),
             maxfev=10000,
         )
         a, k, b = popt
@@ -574,6 +618,7 @@ def fit_kww_decay(
             "a": float(a),
             "k": float(k),
             "b": float(b),
+            "b_at_bound": bool(b >= b_max * (1 - 1e-6) or b <= KWW_B_MIN * (1 + 1e-6)),
             "r_squared": float(r_squared),
             "percentile_cutoff": percentile_cutoff,
             "n_values_used": int(len(filtered_values)),
@@ -587,6 +632,7 @@ def fit_kww_decay(
             "a": 0.0,
             "k": 0.0,
             "b": 1.0,
+            "b_at_bound": False,
             "r_squared": 0.0,
             "percentile_cutoff": percentile_cutoff,
             "n_values_used": int(len(filtered_values)),

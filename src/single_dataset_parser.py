@@ -3,9 +3,11 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem.inchi import MolToInchiKey
+from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from scipy.optimize import curve_fit
 
@@ -233,6 +235,25 @@ def analyze_triple(config_name: str):
         scaling_cutoff_percentile=scaling_cutoff_percentile,
     )
 
+    # Restrict the analysed pairs to a structural neighbourhood, when asked for. Applied here
+    # rather than inside the cliff predicate, because Step 2 sweeps the similarity threshold
+    # itself and would otherwise filter twice. Pairs without a defined similarity (both
+    # compounds censored) cannot be placed and are dropped with the rest.
+    if similarity_threshold is not None:
+        n_before = len(pairwise_data)
+        pairwise_data = {
+            key: data for key, data in pairwise_data.items()
+            if not np.isnan(data.get("similarity", np.nan)) and data["similarity"] >= similarity_threshold
+        }
+        Console().print(
+            f"[cyan]Keeping {len(pairwise_data):,} of {n_before:,} pairs with similarity "
+            f">= {similarity_threshold:g}[/cyan]"
+        )
+        if not pairwise_data:
+            raise ValueError(
+                f"No pairs have similarity >= {similarity_threshold:g}; lower 'similarity_threshold'"
+            )
+
     # Step 2: Cliff identification
     identify_cliffs(
         pairwise_data=pairwise_data,
@@ -240,6 +261,7 @@ def analyze_triple(config_name: str):
         results_dir=results_dir,
         dataset_name=dataset_name,
         embedding_method=embedding_method,
+        seed=seed,
     )
 
     # Step 3: Correlation analysis

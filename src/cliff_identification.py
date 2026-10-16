@@ -413,6 +413,7 @@ def identify_cliffs(
     dataset_name: str | None = None,
     embedding_method: str | None = None,
     distance_metric: str | None = None,
+    seed: int = 42,
 ) -> dict[float, list[str]]:
     """
     Identify activity cliffs in the dataset.
@@ -621,6 +622,7 @@ def identify_cliffs(
         pairwise_data,
         metric="distance_scaled",
         k_neighbors=5,
+        dip_random_seed=seed,
     )
     with open(cliff_dir / "distance_geometry_statistics.json", "w") as f:
         json.dump(distance_geometry, f, indent=2)
