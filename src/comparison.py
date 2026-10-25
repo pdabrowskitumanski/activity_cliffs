@@ -25,9 +25,6 @@ from src.plotting import (
     plot_comparison_cliffs_5pct,
     plot_comparison_lipschitz_90,
     plot_comparison_persistence_mean_max,
-    plot_persistence_landscape_l2_distance_heatmap,
-    plot_persistence_landscape_l2_norm,
-    plot_persistence_landscape_mean_and_variance,
 )
 from src.printing import format_stat, generate_comparison_markdown
 from src.utils import load_config
@@ -133,7 +130,7 @@ def compare(config_name: str) -> None:
     sections.append(step_2_structural_results(config_data, output_dir, console))
     sections.append(step_3_cliff_identification(config_data, output_dir, console))
     sections.append(step_4_correlation(config_data, output_dir, console))
-    sections.append(step_5_persistence_homology(config_data, output_dir, console))
+    sections.append(step_5_cliff_irreducibility(config_data, output_dir, console))
     # Generate extra comparison plots first so they exist for the summary
     extra_plots_section = generate_extra_comparison_plots(config_data, output_dir)
     if extra_plots_section:
@@ -209,7 +206,7 @@ def generate_extra_comparison_plots(config_data: list[dict], output_dir: Path) -
     # --- Plot 3: Mean and max persistence ---
     mean_pers, max_pers = [], []
     for cfg in sorted_configs:
-        p = cfg["path"] / "persistent_homology" / "persistence_metadata.json"
+        p = cfg["path"] / "cliff_irreducibility" / "persistence_metadata.json"
         m1 = m2 = None
         if p.exists():
             with open(p) as f:
@@ -1012,7 +1009,7 @@ def step_4_correlation(
     return "\n".join(lines)
 
 
-def step_5_persistence_homology(
+def step_5_cliff_irreducibility(
     config_data: list[dict], output_dir: Path, console: Console
 ) -> str:
     """
@@ -1032,7 +1029,7 @@ def step_5_persistence_homology(
     rows: list[tuple[str, str, list[float | int | None], int | None]] = []
 
     for cfg in sorted_configs:
-        path = cfg["path"] / "persistent_homology" / "persistence_metadata.json"
+        path = cfg["path"] / "cliff_irreducibility" / "persistence_metadata.json"
         if not path.exists():
             rows.append((cfg["embedding_method"], cfg["distance_metric"], [None] * len(dim_0_keys), None))
             continue
@@ -1046,7 +1043,7 @@ def step_5_persistence_homology(
             n_persistent = int(n_persistent) if isinstance(n_persistent, (float, str)) else None
         rows.append((cfg["embedding_method"], cfg["distance_metric"], vals, n_persistent))
 
-    lines = ["## 5. Persistence Homology", ""]
+    lines = ["## 5. Cliff Irreducibility", ""]
     if not rows:
         lines.append("*No persistence metadata found.*")
         return "\n".join(lines)
@@ -1067,143 +1064,94 @@ def step_5_persistence_homology(
     lines.extend([
         "### Key persistence descriptors (H₀)",
         "",
-        "| Embedding | Distance metric | Landscape L2 | Mean persistence | Max persistence | Persistence entropy |",
-        "|-----------|-----------------|---------------|------------------|----------------|---------------------|",
+        "Bar length is the structural scale over which a cluster stays separate from the rest.",
+        "",
+        "| Embedding | Distance metric | Mean persistence | Max persistence |",
+        "|-----------|-----------------|------------------|-----------------|",
     ])
     for cfg in sorted_configs:
-        meta_path = cfg["path"] / "persistent_homology" / "persistence_metadata.json"
-        pdata = _read_json_if_exists(meta_path)
-        dim0 = ((pdata or {}).get("statistics") or {}).get("dim_0") or {}
-        l2 = dim0.get("landscape_l2_norm")
-        if l2 is None and pdata:
-            l2 = ((pdata.get("landscape_l2_norm") or {}).get("dim_0"))
-        mp = dim0.get("mean_persistence")
-        mx = dim0.get("max_persistence")
-        # Shannon entropy H = -sum p_i ln p_i (non-negative); the signed sum is also stored
-        ent = dim0.get("persistent_entropy_shannon")
+        dim0 = ((_read_json_if_exists(cfg["path"] / "cliff_irreducibility" / "persistence_metadata.json")
+                 or {}).get("statistics") or {}).get("dim_0") or {}
+        mp, mx = dim0.get("mean_persistence"), dim0.get("max_persistence")
         lines.append(
-            "| "
-            + " | ".join([
-                cfg["embedding_method"],
-                cfg["distance_metric"],
-                format_stat(l2) if l2 is not None else "—",
+            "| " + " | ".join([
+                cfg["embedding_method"], cfg["distance_metric"],
                 format_stat(mp) if mp is not None else "—",
                 format_stat(mx) if mx is not None else "—",
-                format_stat(ent) if ent is not None else "—",
-            ])
-            + " |"
+            ]) + " |"
         )
     lines.append("")
 
-    # Persistence landscape: Var(λ₁(t)) across configs using persim
-    try:
-        from persim import PersLandscapeApprox
-    except ImportError:
-        console.print("  [yellow]⚠ persim not installed; skipping persistence landscape variance[/yellow]")
-    else:
-        csv_name = "persistence_dim0.csv"
-        num_steps = 500
-        start = 0.0
-        stop = 1.0  # death cannot exceed 1
-        config_dgms: list[tuple[dict, np.ndarray]] = []
-
+    # Half-dissolution scale per barrier level: the primary cross-configuration statistic
+    summaries = {}
+    levels: list[float] = []
+    for cfg in sorted_configs:
+        data = _read_json_if_exists(cfg["path"] / "cliff_irreducibility" / "irreducibility_summary.json")
+        if data:
+            summaries[(cfg["embedding_method"], cfg["distance_metric"])] = data
+            for lvl in data.get("barrier_levels") or []:
+                if lvl not in levels:
+                    levels.append(float(lvl))
+    if summaries:
+        levels.sort(reverse=True)
+        head = ["Embedding", "Distance metric"] + [f"Half-dissolution (>= {lvl:g})" for lvl in levels]
+        lines.extend([
+            "### Cliff irreducibility — half-dissolution scale",
+            "",
+            "Structural scale, as a percentile of the configuration's own distance distribution, at "
+            "which half of the cliffs become reducible. Larger means cliffs survive to coarser scales.",
+            "",
+            "| " + " | ".join(head) + " |",
+            "|" + "|".join(["---"] * len(head)) + "|",
+        ])
         for cfg in sorted_configs:
-            csv_path = cfg["path"] / "persistent_homology" / csv_name
-            if not csv_path.exists():
-                continue
-            df = pd.read_csv(csv_path)
-            if df.empty or "birth" not in df.columns or "death" not in df.columns:
-                continue
-            birth = df["birth"].to_numpy(dtype=float)
-            death = df["death"].to_numpy(dtype=float)
-            death = np.where(np.isfinite(death), death, 1.0)  # inf -> 1 (death cannot exceed 1)
-            dgm = np.column_stack((birth, death))
-            if dgm.size == 0:
-                continue
-            config_dgms.append((cfg, dgm))
+            data = summaries.get((cfg["embedding_method"], cfg["distance_metric"]))
+            cells = [cfg["embedding_method"], cfg["distance_metric"]]
+            for lvl in levels:
+                entry = ((data or {}).get("half_dissolution") or {}).get(f"{lvl:g}") or {}
+                pct = entry.get("percentile")
+                cells.append(format_stat(pct) if pct is not None else "—")
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
 
-        if config_dgms:
-            lambda1_list = []
-            l2_norms: list[float] = []
-            configs_for_landscape: list[dict] = []
-            landscapes_list: list = []  # PersLandscapeApprox per config, for pairwise L2 distance
-            for cfg, dgm in config_dgms:
-                pla = PersLandscapeApprox(dgms=[dgm], hom_deg=0, start=start, stop=stop, num_steps=num_steps)
-                lambda1_list.append(pla[0])
-                l2_norms.append(float(pla.p_norm(p=2)))
-                configs_for_landscape.append(cfg)
-                landscapes_list.append(pla)
-
-            # L2 norm table and bar plot (for any number of configs)
+        # The curve itself, so the plots can be rebuilt from the report
+        for lvl in levels:
+            col = f"fraction_irreducible_{lvl:g}"
+            pcts: list[float] = []
+            per_cfg: dict[tuple[str, str], dict[float, float]] = {}
+            for cfg in sorted_configs:
+                csv_path = cfg["path"] / "cliff_irreducibility" / "irreducibility_curve.csv"
+                if not csv_path.exists():
+                    continue
+                df = pd.read_csv(csv_path)
+                if col not in df.columns:
+                    continue
+                per_cfg[(cfg["embedding_method"], cfg["distance_metric"])] = dict(
+                    zip(df["percentile"], df[col])
+                )
+                for v in df["percentile"]:
+                    if v not in pcts:
+                        pcts.append(float(v))
+            if not per_cfg:
+                continue
+            pcts.sort()
+            head = ["Embedding", "Distance metric"] + [f"{v:g}" for v in pcts]
             lines.extend([
-                "### L2 norm of persistence landscape",
+                f"### Irreducible fraction vs structural scale (barrier >= {lvl:g})",
                 "",
-                "| Embedding | Distance metric | L2 norm |",
-                "|-----------|-----------------|--------|",
+                "Columns are percentiles of each configuration's own distance distribution.",
+                "",
+                "| " + " | ".join(head) + " |",
+                "|" + "|".join(["---"] * len(head)) + "|",
             ])
-            for cfg, norm in zip(configs_for_landscape, l2_norms):
-                lines.append(f"| {cfg['embedding_method']} | {cfg['distance_metric']} | {format_stat(norm)} |")
+            for key, series in per_cfg.items():
+                cells = [key[0], key[1]] + [
+                    (format_stat(series[v]) if v in series and pd.notna(series[v]) else "—") for v in pcts
+                ]
+                lines.append("| " + " | ".join(cells) + " |")
             lines.append("")
-            short_labels = [f"{c['embedding_method']} / {c['distance_metric']}" for c in configs_for_landscape]
-            embedding_methods = [c["embedding_method"] for c in configs_for_landscape]
-            plot_persistence_landscape_l2_norm(
-                short_labels,
-                l2_norms,
-                embedding_methods,
-                output_dir / "persistence_landscape_l2_norm.png",
-            )
-            lines.extend([
-                "![L2 norm of persistence landscape](persistence_landscape_l2_norm.png)",
-                "",
-            ])
-            console.print("  [green]✓ Persistence landscape L2 norm table and plot generated[/green]")
 
-            # Pairwise L2 distance between landscapes (heatmap) when ≥2 configs
-            if len(landscapes_list) >= 2:
-                n_pl = len(landscapes_list)
-                l2_dist_matrix = np.zeros((n_pl, n_pl))
-                for i in range(n_pl):
-                    for j in range(n_pl):
-                        diff = landscapes_list[i] - landscapes_list[j]
-                        l2_dist_matrix[i, j] = diff.p_norm(p=2)
-                plot_persistence_landscape_l2_distance_heatmap(
-                    short_labels,
-                    l2_dist_matrix,
-                    output_dir / "persistence_landscape_l2_distance_heatmap.png",
-                )
-                lines.extend([
-                    "### L2 distance between persistence landscapes",
-                    "",
-                    "Pairwise L2 distance between landscape of each config:",
-                    "",
-                    "![L2 distance between landscapes](persistence_landscape_l2_distance_heatmap.png)",
-                    "",
-                ])
-                console.print("  [green]✓ Persistence landscape L2 distance heatmap generated[/green]")
-
-            # Mean and variance of λ₁(t) only when ≥2 configs
-            if len(config_dgms) >= 2:
-                matrix = np.array(lambda1_list)
-                mean_lambda1 = np.mean(matrix, axis=0)
-                var_lambda1 = np.var(matrix, axis=0)
-                t_grid = np.linspace(start, stop, num_steps)
-                plot_persistence_landscape_mean_and_variance(
-                    t_grid, mean_lambda1, var_lambda1,
-                    output_dir / "persistence_landscape_mean_var_lambda1.png",
-                )
-                lines.extend([
-                    "### Mean and variance of first persistence landscape λ₁(t)",
-                    "",
-                    "Pointwise mean and variance of the first landscape function across configs:",
-                    "",
-                    "![Mean and Var(λ₁(t))](persistence_landscape_mean_var_lambda1.png)",
-                    "",
-                ])
-                console.print("  [green]✓ Persistence landscape mean and variance plot generated[/green]")
-        else:
-            console.print("  [dim]No persistence_dim0 CSVs found; skipping landscape section[/dim]")
-
-    console.print("  [green]✓ Persistence homology table generated[/green]")
+    console.print("  [green]✓ Cliff irreducibility tables generated[/green]")
     return "\n".join(lines)
 
 
@@ -1356,36 +1304,24 @@ def step_6_summary(
     if vals:
         rows.append(("MMP analysis (99th percentile)", vals, False))
 
-    # 12) Persistence homology energy (L2 norm of landscape) - best=highest
-    try:
-        from persim import PersLandscapeApprox
-    except ImportError:
-        pass
-    else:
-        vals = []
-        start, stop, num_steps = 0.0, 1.0, 500
-        for cfg in sorted_configs:
-            csv_path = cfg["path"] / "persistent_homology" / "persistence_dim0.csv"
-            if not csv_path.exists():
-                continue
-            df = pd.read_csv(csv_path)
-            if df.empty or "birth" not in df.columns or "death" not in df.columns:
-                continue
-            birth = df["birth"].to_numpy(dtype=float)
-            death = df["death"].to_numpy(dtype=float)
-            death = np.where(np.isfinite(death), death, 1.0)
-            dgm = np.column_stack((birth, death))
-            if dgm.size == 0:
-                continue
-            pla = PersLandscapeApprox(dgms=[dgm], hom_deg=0, start=start, stop=stop, num_steps=num_steps)
-            vals.append((_label(cfg), float(pla.p_norm(p=2))))
-        if vals:
-            rows.append(("Persistence homology energy (landscape L2 norm)", vals, False))
-
-    # 13) Persistence homology mean persistence - best=largest
+    # 12) Cliff irreducibility: half-dissolution scale at the cliff threshold - best=largest
     vals = []
     for cfg in sorted_configs:
-        p = cfg["path"] / "persistent_homology" / "persistence_metadata.json"
+        d = _read_json_if_exists(cfg["path"] / "cliff_irreducibility" / "irreducibility_summary.json")
+        if not d:
+            continue
+        thr = d.get("activity_threshold")
+        entry = (d.get("half_dissolution") or {}).get(f"{float(thr):g}" if thr is not None else "") or {}
+        pct = entry.get("percentile")
+        if pct is not None:
+            vals.append((_label(cfg), float(pct)))
+    if vals:
+        rows.append(("Cliff irreducibility (half-dissolution scale)", vals, False))
+
+    # 13) H0 mean persistence - best=largest
+    vals = []
+    for cfg in sorted_configs:
+        p = cfg["path"] / "cliff_irreducibility" / "persistence_metadata.json"
         if p.exists():
             d = json.load(open(p))
             v = (d.get("statistics") or {}).get("dim_0") or {}
@@ -1393,7 +1329,7 @@ def step_6_summary(
             if mp is not None:
                 vals.append((_label(cfg), float(mp)))
     if vals:
-        rows.append(("Persistence homology mean persistence", vals, False))
+        rows.append(("H0 mean persistence", vals, False))
 
     lines = ["## 6. Summary", "", "### Best and worst config by category", ""]
     lines.append("| Category | Best | Worst |")

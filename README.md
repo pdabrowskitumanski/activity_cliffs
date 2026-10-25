@@ -289,23 +289,28 @@ Analyzes the correlation between structural similarity and activity differences.
 - `binned_cliff_probability.csv` / `.png` — Cliff probability vs similarity
 - `summary.json` — Summary of correlation analysis
 
-#### Step 4: Persistent Homology Analysis
+#### Step 4: Cliff Irreducibility
 
-Applies topological data analysis to understand the structure of activity cliffs.
+Tests whether activity cliffs survive contact with the rest of the data, or dissolve into chains
+of small, activity-preserving edits.
 
 **What it does:**
-- **Singly filtrated PH:** Builds a Vietoris-Rips complex filtered by log ratio values
-- **Doubly filtrated PH:** Creates slices at different similarity thresholds and computes PH for each
-- Computes persistence diagrams and statistics for dimensions 0, 1, and 2
+- Sweeps a structural scale S, sampled at percentiles of the configuration's own distance
+  distribution, joining molecules closer than S
+- At each scale, a cliff is an edge whose activity difference reaches `activity_threshold`; its
+  *barrier* is the gentlest activity step any detour through the same graph must still take
+- Reports the fraction of cliffs that stay irreducible at several barrier levels (the cliff
+  threshold itself, and two at the scale of assay reproducibility), and the half-dissolution
+  scale at which that fraction falls to one half
+- Computes H0 of the same structural filtration as supporting geometry (mean and max persistence)
 
-**Outputs (in `persistent_homology/` subdirectory):**
-- `singly_filtrated_dimX.csv` — Persistence diagrams per dimension
-- `singly_filtrated_diagram.png` — Persistence and barcode diagrams
-- `singly_filtrated_stats.json` — Statistics summary
-- `doubly_filtrated_simX.X_dimY.csv` — Diagrams for each similarity slice
-- `doubly_filtrated_simX.X_diagram.png` — Diagrams for each slice
-- `doubly_filtrated_comparison.png` — How PH features change with threshold
-- `doubly_filtrated_stats.json` — Statistics across all slices
+**Outputs (in `cliff_irreducibility/` subdirectory):**
+- `irreducibility_curve.csv` — Irreducible fraction at each structural scale and barrier level
+- `irreducibility_summary.json` — Half-dissolution scales, counts, H0 statistics
+- `irreducibility_curve.png` — Plot of the irreducible fraction against scale
+- `persistence_dim0.csv` — H0 barcode of the structural filtration
+- `persistence_metadata.json` — H0 statistics
+- `persistence_diagram.png` — H0 diagram and barcode
 
 ### Output Structure
 
@@ -348,16 +353,13 @@ results/SARS_CoV2/morgan_tanimoto_1a2b3c4d/
 │   ├── binned_pearson_correlation.png
 │   ├── binned_cliff_probability.csv
 │   └── binned_cliff_probability.png
-└── persistent_homology/
-    ├── singly_filtrated_dim0.csv
-    ├── singly_filtrated_dim1.csv
-    ├── singly_filtrated_diagram.png
-    ├── singly_filtrated_stats.json
-    ├── doubly_filtrated_sim0.3_dim0.csv
-    ├── doubly_filtrated_sim0.3_diagram.png
-    ├── ... (for each threshold)
-    ├── doubly_filtrated_comparison.png
-    └── doubly_filtrated_stats.json
+└── cliff_irreducibility/
+    ├── irreducibility_curve.csv
+    ├── irreducibility_summary.json
+    ├── irreducibility_curve.png
+    ├── persistence_dim0.csv
+    ├── persistence_metadata.json
+    └── persistence_diagram.png
 ```
 
 ---
@@ -475,7 +477,7 @@ Per-split AUCs are written to `results/<dataset>/cliff_probe*.csv` and summarise
 | `src/datasets.py` | Dataset resolution: standard datasets (`src/dataset_sources.json`) or local CSV files |
 | `src/cliff_identification.py` | Activity cliff identification and statistics |
 | `src/correlation.py` | Correlation analysis and Lipschitz statistics |
-| `src/persistent_homology.py` | Topological data analysis with ripser |
+| `src/cliff_irreducibility.py` | Cliff irreducibility across structural scales, with H0 of the structural filtration |
 | `src/plotting.py` | Visualization utilities |
 | `src/printing.py` | Markdown report generation |
 | `src/comparison.py` | Multi-run comparison |

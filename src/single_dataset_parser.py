@@ -18,7 +18,7 @@ from src.correlation import correlate_similarity_vs_activity
 from src.datasets import DatasetSpec, add_log_activity_and_censoring, resolve_dataset
 from src.embeddings import get_embedding
 from src.pairwise_data_preparation import create_pairwise_data
-from src.persistent_homology import calculate_persistent_homology
+from src.cliff_irreducibility import calculate_cliff_irreducibility
 from src.printing import save_summary_markdown
 from src.utils import load_config
 
@@ -273,8 +273,8 @@ def analyze_triple(config_name: str):
         mmp_file=mmp_file,
     )
 
-    # Step 4: Persistent homology analysis
-    calculate_persistent_homology(
+    # Step 4: Cliff irreducibility
+    calculate_cliff_irreducibility(
         pairwise_data=pairwise_data,
         results_dir=results_dir,
         activity_threshold=activity_threshold,

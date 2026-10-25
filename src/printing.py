@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from rich.console import Console
 
 
@@ -672,121 +673,112 @@ def create_cliff_identification_summary_markdown(
     return "\n".join(lines)
 
 
-def create_persistent_homology_summary_markdown(
-    results_dir: Path,
-) -> str:
+def create_cliff_irreducibility_summary_markdown(results_dir: Path) -> str:
     """
-    Create a markdown summary for the persistent homology analysis.
+    Create a markdown summary for the cliff irreducibility analysis.
 
-    Includes number of H0 components, long-lived components (persistence > threshold),
-    average persistence, and persistence landscape figures (Bubenik / persim).
+    Reports the irreducible-cliff fraction across structural scales, the half-dissolution scale
+    per barrier level, and the supporting H0 persistence statistics.
 
     Args:
-        results_dir: Path to the results directory (contains persistent_homology/).
+        results_dir: Path to the results directory (contains cliff_irreducibility/).
 
     Returns:
-        Markdown formatted string for the persistent homology section.
+        Markdown formatted string for the step's section.
     """
     results_dir = Path(results_dir)
-    ph_dir = results_dir / "persistent_homology"
-    lines = ["## Step 4: Persistent Homology"]
+    ci_dir = results_dir / "cliff_irreducibility"
+    lines = ["## Step 4: Cliff Irreducibility"]
 
-    if not ph_dir.exists():
-        lines.append("*No persistent homology results found.*")
+    if not ci_dir.exists():
+        lines.append("*No cliff irreducibility results found.*")
         return "\n".join(lines)
 
-    meta_file = ph_dir / "persistence_metadata.json"
-    clusters_file = ph_dir / "persistent_clusters.json"
+    summary_file = ci_dir / "irreducibility_summary.json"
+    if not summary_file.exists():
+        lines.append("*No irreducibility summary found.*")
+        return "\n".join(lines)
+    with open(summary_file) as f:
+        summary = json.load(f)
 
-    if meta_file.exists():
-        with open(meta_file) as f:
-            meta = json.load(f)
-        stats = meta.get("statistics", {})
-        dim0 = stats.get("dim_0", {})
-        threshold = meta.get("persistence_threshold", "N/A")
-        n_all_components = dim0.get("n_features", "N/A")
-        avg_persistence = dim0.get("mean_persistence")
-        n_long_lived = meta.get("n_persistent_clusters", "N/A")
-        lines.extend([
-            "### Overview",
-            f"- **Persistence threshold**: {threshold}",
-            f"- **Number of all H0 components**: {n_all_components}",
-            f"- **Number of long-lived components** (persistence ≥ threshold, incl. inf): {n_long_lived}",
-        ])
-        if avg_persistence is not None:
-            lines.append(f"- **Average persistence** (H0, finite): {format_stat(avg_persistence)}")
-        l2_map = meta.get("landscape_l2_norm") or {}
-        l2_h0 = l2_map.get("dim_0")
-        if l2_h0 is not None:
-            lines.append(f"- **Persistence landscape L2 norm** (H0): {format_stat(l2_h0)}")
-        pe0 = dim0.get("persistent_entropy_shannon")
-        if pe0 is not None:
-            lines.append(
-                f"- **Persistent entropy** (Shannon, −Σ p_i ln p_i over finite lifetimes, H0): {format_stat(pe0)}"
-            )
-        lines.append("")
+    levels = summary.get("barrier_levels") or []
+    lines.extend([
+        "### Overview",
+        f"- **Cliff threshold**: {summary.get('activity_threshold', 'N/A')}",
+        f"- **Barrier levels**: {', '.join(f'{lvl:g}' for lvl in levels) if levels else 'N/A'}",
+        f"- **Molecules**: {summary.get('n_compounds', 'N/A'):,} "
+        f"(in at least one cliff: {summary.get('n_compounds_in_any_cliff', 'N/A'):,})",
+        f"- **Usable pairs**: {summary.get('n_pairs_usable', 'N/A'):,}; "
+        f"cliff pairs: {summary.get('n_cliff_pairs_total', 'N/A'):,}",
+        "",
+        "### Half-dissolution scale",
+        "Structural scale at which half of the cliffs become reducible.",
+        "",
+        "| Barrier level | Percentile | Scaled distance |",
+        "|---------------|------------|-----------------|",
+    ])
+    half = summary.get("half_dissolution") or {}
+    for lvl in levels:
+        entry = half.get(f"{lvl:g}") or {}
+        pct, scale = entry.get("percentile"), entry.get("scale")
+        if pct is None:
+            note = entry.get("outside_sampled_range")
+            cells = [f"stays {note} 0.5" if note else "—", "—"]
+        else:
+            cells = [format_stat(pct), format_stat(scale)]
+        lines.append(f"| >= {lvl:g} | " + " | ".join(cells) + " |")
+    lines.append("")
 
-        # Statistics table for dimensions 0, 1, 2
-        stat_keys = [
-            ("n_features", "Number of features"),
-            ("n_finite", "Finite persistence"),
-            ("n_infinite", "Infinite persistence"),
-            ("max_persistence", "Max persistence"),
-            ("mean_persistence", "Mean persistence"),
-            ("median_persistence", "Median persistence"),
-            ("std_persistence", "Std persistence"),
-            ("total_persistence", "Total persistence"),
-            ("persistent_entropy", "Persistent entropy Σ p_i ln p_i"),
-            ("persistent_entropy_shannon", "Shannon −Σ p_i ln p_i"),
-            ("landscape_l2_norm", "Landscape L2 norm"),
-            ("max_birth", "Max birth"),
-            ("max_death", "Max death"),
+    curve_file = ci_dir / "irreducibility_curve.csv"
+    if curve_file.exists():
+        curve = pd.read_csv(curve_file)
+        frac_cols = [c for c in curve.columns if c.startswith("fraction_irreducible_")]
+        headers = ["Percentile", "Scaled distance", "Cliff pairs"] + [
+            ">= " + c.rsplit("_", 1)[-1] for c in frac_cols
         ]
-        lines.append("### Persistence statistics by dimension")
-        lines.append("")
-        lines.append("| Statistic | H0 | H1 | H2 |")
-        lines.append("|-----------|----|----|----|")
-        for key, label in stat_keys:
-            row = [label]
-            for d in range(3):
-                dim_key = f"dim_{d}"
-                dim_stats = stats.get(dim_key, {})
-                val = dim_stats.get(key)
-                if val is None:
-                    row.append("—")
-                elif isinstance(val, float):
-                    row.append(format_stat(val))
-                else:
-                    row.append(str(val))
-            lines.append("| " + " | ".join(row) + " |")
-        lines.append("")
-
-    def _img(rel_name: str) -> str:
-        return f"persistent_homology/{rel_name}"
-
-    # Filenames unchanged; plots are persistence landscapes (tent functions).
-    single_fig = ph_dir / "persistence_diagram.png"
-    if single_fig.exists():
         lines.extend([
-            "### Persistence landscape (H0)",
-            f"![Persistence landscape]({_img('persistence_diagram.png')})",
+            "### Irreducible fraction vs structural scale",
+            "",
+            "| " + " | ".join(headers) + " |",
+            "|" + "|".join(["---"] * len(headers)) + "|",
         ])
-    else:
-        all_fig = ph_dir / "persistence_diagram_all.png"
-        if all_fig.exists():
-            lines.extend([
-                "### Persistence landscapes (H0, H1, …)",
-                f"![Persistence landscapes — all dimensions]({_img('persistence_diagram_all.png')})",
-            ])
-        h0_fig = ph_dir / "persistence_diagram_H0.png"
-        if h0_fig.exists():
-            lines.extend([
-                "### Persistence landscape (H0 only)",
-                f"![Persistence landscape — H0]({_img('persistence_diagram_H0.png')})",
-            ])
+        for _, row in curve.iterrows():
+            cells = [format_stat(row["percentile"]), format_stat(row["scale"]),
+                     f"{int(row['n_cliff_pairs']):,}"]
+            cells += [format_stat(row[c]) if pd.notna(row[c]) else "—" for c in frac_cols]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
 
+    stats = (summary.get("statistics") or {}).get("dim_0") or {}
+    if stats:
+        lines.extend([
+            "### Supporting geometry (H0 of the structural filtration)",
+            f"- **Bars**: {stats.get('n_features', 'N/A'):,} "
+            f"(finite {stats.get('n_finite', 'N/A'):,}, infinite {stats.get('n_infinite', 'N/A'):,})",
+            f"- **Mean persistence**: "
+            f"{format_stat(stats['mean_persistence']) if stats.get('mean_persistence') is not None else '—'}",
+            f"- **Max persistence**: "
+            f"{format_stat(stats['max_persistence']) if stats.get('max_persistence') is not None else '—'}",
+            "",
+        ])
+
+    for name, caption in [("irreducibility_curve.png", "Irreducible fraction vs structural scale"),
+                          ("persistence_diagram.png", "H0 persistence diagram and barcode")]:
+        if (ci_dir / name).exists():
+            lines.extend([f"![{caption}](cliff_irreducibility/{name})", ""])
+
+    lines.extend([
+        "### Output Files",
+        "| File | Description |",
+        "|------|-------------|",
+        "| `irreducibility_curve.csv` | Irreducible fraction at each structural scale and barrier level |",
+        "| `irreducibility_summary.json` | Half-dissolution scales, counts and H0 statistics |",
+        "| `persistence_dim0.csv` | H0 barcode of the structural filtration |",
+        "| `persistence_metadata.json` | H0 statistics |",
+        "| `irreducibility_curve.png` | Plot of the irreducible fraction |",
+        "| `persistence_diagram.png` | H0 diagram and barcode |",
+    ])
     return "\n".join(lines)
-
 
 def create_summary_markdown(
     results_dir: Path,
@@ -840,7 +832,7 @@ def create_summary_markdown(
     lines.append("---")
 
     # Add persistent homology analysis section
-    lines.append(create_persistent_homology_summary_markdown(results_dir))
+    lines.append(create_cliff_irreducibility_summary_markdown(results_dir))
     lines.append("---")
     
     # Final summary
@@ -855,8 +847,9 @@ def create_summary_markdown(
         "and Gini = (s−1)/(s+1); distance-space geometry (CV, dip test, relative contrast, hubness).",
         "3. **Correlation Analysis**: Analyzed the relationship between structural similarity "
         "and activity differences using conditional probability and Lipschitz statistics.",
-        "4. **Persistent Homology**: Rips filtration by similarity; H0/H1/H2 persistence diagrams "
-        "and long-lived component clusters.",
+        "4. **Cliff Irreducibility**: fraction of activity cliffs that cannot be bypassed by a chain "
+        "of structurally tolerable, activity-preserving edits, across structural scales; H0 of the "
+        "structural filtration as supporting geometry.",
         "---",
         "*Report generated by Activity Cliffs Analysis Pipeline*",
     ])
