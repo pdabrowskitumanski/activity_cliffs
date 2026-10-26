@@ -1098,8 +1098,8 @@ def step_5_cliff_irreducibility(
         lines.extend([
             "### Cliff irreducibility — half-dissolution scale",
             "",
-            "Structural scale, as a percentile of the configuration's own distance distribution, at "
-            "which half of the cliffs become reducible. Larger means cliffs survive to coarser scales.",
+            "Mean degree, i.e. structural neighbours per molecule, at which half of the cliffs "
+            "become reducible. Larger means cliffs survive into coarser neighbourhoods.",
             "",
             "| " + " | ".join(head) + " |",
             "|" + "|".join(["---"] * len(head)) + "|",
@@ -1109,7 +1109,7 @@ def step_5_cliff_irreducibility(
             cells = [cfg["embedding_method"], cfg["distance_metric"]]
             for lvl in levels:
                 entry = ((data or {}).get("half_dissolution") or {}).get(f"{lvl:g}") or {}
-                pct = entry.get("percentile")
+                pct = entry.get("degree")
                 cells.append(format_stat(pct) if pct is not None else "—")
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
@@ -1117,7 +1117,7 @@ def step_5_cliff_irreducibility(
         # The curve itself, so the plots can be rebuilt from the report
         for lvl in levels:
             col = f"fraction_irreducible_{lvl:g}"
-            pcts: list[float] = []
+            degrees: list[float] = []
             per_cfg: dict[tuple[str, str], dict[float, float]] = {}
             for cfg in sorted_configs:
                 csv_path = cfg["path"] / "cliff_irreducibility" / "irreducibility_curve.csv"
@@ -1127,26 +1127,26 @@ def step_5_cliff_irreducibility(
                 if col not in df.columns:
                     continue
                 per_cfg[(cfg["embedding_method"], cfg["distance_metric"])] = dict(
-                    zip(df["percentile"], df[col])
+                    zip(df["degree_target"], df[col])
                 )
-                for v in df["percentile"]:
-                    if v not in pcts:
-                        pcts.append(float(v))
+                for v in df["degree_target"]:
+                    if v not in degrees:
+                        degrees.append(float(v))
             if not per_cfg:
                 continue
-            pcts.sort()
-            head = ["Embedding", "Distance metric"] + [f"{v:g}" for v in pcts]
+            degrees.sort()
+            head = ["Embedding", "Distance metric"] + [f"{v:g}" for v in degrees]
             lines.extend([
                 f"### Irreducible fraction vs structural scale (barrier >= {lvl:g})",
                 "",
-                "Columns are percentiles of each configuration's own distance distribution.",
+                "Columns are the graph's mean degree.",
                 "",
                 "| " + " | ".join(head) + " |",
                 "|" + "|".join(["---"] * len(head)) + "|",
             ])
             for key, series in per_cfg.items():
                 cells = [key[0], key[1]] + [
-                    (format_stat(series[v]) if v in series and pd.notna(series[v]) else "—") for v in pcts
+                    (format_stat(series[v]) if v in series and pd.notna(series[v]) else "—") for v in degrees
                 ]
                 lines.append("| " + " | ".join(cells) + " |")
             lines.append("")
@@ -1312,7 +1312,7 @@ def step_6_summary(
             continue
         thr = d.get("activity_threshold")
         entry = (d.get("half_dissolution") or {}).get(f"{float(thr):g}" if thr is not None else "") or {}
-        pct = entry.get("percentile")
+        pct = entry.get("degree")
         if pct is not None:
             vals.append((_label(cfg), float(pct)))
     if vals:

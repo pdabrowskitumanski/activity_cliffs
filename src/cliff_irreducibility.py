@@ -35,10 +35,14 @@ from scipy.sparse.csgraph import connected_components
 
 from src.plotting import plot_persistence_diagram
 
-# Structural scales at which the curve is sampled, as percentiles of the configuration's own
-# pairwise distance distribution. Dense where cliffs dissolve, stopping once the curve saturates.
-DEFAULT_SCALE_PERCENTILES = (
-    0.05, 0.07, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0,
+# Structural scales at which the curve is sampled, as the graph's mean degree: the number of
+# structural neighbours per molecule. Degree rather than a percentile of pairs, because at a
+# fixed percentile the degree grows with dataset size (edges go as p*n^2/2, degree as p*n), so
+# the same percentile is a far denser neighbourhood on a large target and the curves of
+# different datasets are sampled in different regimes. Dense at the low end, where the strictest
+# barrier level dissolves, and extending until every level has saturated.
+DEFAULT_SCALE_DEGREES = (
+    0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0, 96.0, 128.0,
 )
 # Activity steps a detour may not avoid. The first is the cliff threshold (substituted at run
 # time); the others sit at the scale of assay reproducibility.
@@ -98,6 +102,19 @@ def _components(rows: np.ndarray, cols: np.ndarray, mask: np.ndarray, n: int) ->
     return labels
 
 
+def _scales_for_degrees(dist: np.ndarray, usable: np.ndarray, n: int, degrees) -> list[float]:
+    """
+    Distance threshold giving each target mean degree: the m-th smallest usable distance, where
+    m = degree * n / 2 is the edge count that degree implies.
+    """
+    ordered = np.sort(dist[usable])
+    out = []
+    for degree in degrees:
+        m = int(round(degree * n / 2))
+        out.append(float(ordered[min(max(m, 1), len(ordered)) - 1]))
+    return out
+
+
 def irreducibility_curve(
     dist: np.ndarray,
     dpa: np.ndarray,
@@ -105,7 +122,7 @@ def irreducibility_curve(
     cols: np.ndarray,
     n: int,
     activity_threshold: float,
-    scale_percentiles=DEFAULT_SCALE_PERCENTILES,
+    scale_degrees=DEFAULT_SCALE_DEGREES,
     barrier_levels=DEFAULT_BARRIER_LEVELS,
 ) -> list[dict]:
     """
@@ -120,17 +137,23 @@ def irreducibility_curve(
     if not usable.any():
         return []
     levels = tuple(dict.fromkeys((activity_threshold,) + tuple(barrier_levels)))
-    scales = np.nanpercentile(dist[usable], list(scale_percentiles))
+    scales = _scales_for_degrees(dist, usable, n, scale_degrees)
 
     curve = []
-    for pct, scale in zip(scale_percentiles, scales):
+    seen: set[float] = set()
+    for target, scale in zip(scale_degrees, scales):
+        if scale in seen:
+            continue   # ties in the distance distribution can collapse two targets onto one scale
+        seen.add(scale)
         within = usable & (dist <= scale)
         cliff = within & (dpa >= activity_threshold)
         n_cliff = int(cliff.sum())
+        n_pairs = int(within.sum())
         point = {
-            "percentile": float(pct),
+            "degree_target": float(target),
+            "degree": 2.0 * n_pairs / n,
             "scale": float(scale),
-            "n_pairs": int(within.sum()),
+            "n_pairs": n_pairs,
             "n_cliff_pairs": n_cliff,
         }
         for level in levels:
@@ -146,16 +169,16 @@ def irreducibility_curve(
 
 def half_dissolution_scales(curve: list[dict], levels) -> dict[str, dict | None]:
     """
-    Scale at which each level's irreducible fraction falls to one half.
+    Mean degree at which each level's irreducible fraction falls to one half.
 
-    Linear interpolation in log10(percentile) between the two samples that bracket the crossing.
+    Linear interpolation in log10(degree) between the two samples that bracket the crossing.
     None when the curve does not cross within the sampled range, with 'above'/'below' recording
     which side it stayed on.
     """
     out: dict[str, dict | None] = {}
     for level in levels:
         key = f"fraction_irreducible_{level:g}"
-        pts = [(p["percentile"], p["scale"], p[key]) for p in curve if p.get(key) is not None]
+        pts = [(p["degree"], p["scale"], p[key]) for p in curve if p.get(key) is not None]
         if len(pts) < 2:
             out[f"{level:g}"] = None
             continue
@@ -164,11 +187,11 @@ def half_dissolution_scales(curve: list[dict], levels) -> dict[str, dict | None]
             if (f0 - HALF_DISSOLUTION) * (f1 - HALF_DISSOLUTION) <= 0 and f0 != f1:
                 t = (f0 - HALF_DISSOLUTION) / (f0 - f1)
                 lp = np.log10(p0) + t * (np.log10(p1) - np.log10(p0))
-                crossing = {"percentile": float(10 ** lp), "scale": float(s0 + t * (s1 - s0))}
+                crossing = {"degree": float(10 ** lp), "scale": float(s0 + t * (s1 - s0))}
                 break
         if crossing is None:
             side = "above" if pts[-1][2] > HALF_DISSOLUTION else "below"
-            crossing = {"percentile": None, "scale": None, "outside_sampled_range": side}
+            crossing = {"degree": None, "scale": None, "outside_sampled_range": side}
         out[f"{level:g}"] = crossing
     return out
 
@@ -271,13 +294,13 @@ def _plot_curve(curve: list[dict], levels, output_path: Path, title: str) -> Non
     fig, ax = plt.subplots(figsize=(7, 4.5))
     for level in levels:
         key = f"fraction_irreducible_{level:g}"
-        pts = [(p["percentile"], p[key]) for p in curve if p.get(key) is not None]
+        pts = [(p["degree"], p[key]) for p in curve if p.get(key) is not None]
         if pts:
             x, y = zip(*pts)
             ax.plot(x, y, marker="o", markersize=4, label=f"barrier $\\geq$ {level:g}")
     ax.axhline(HALF_DISSOLUTION, color="0.6", linewidth=1, linestyle="--")
     ax.set_xscale("log")
-    ax.set_xlabel("Structural scale (percentile of the pairwise distance distribution)")
+    ax.set_xlabel("Mean degree (structural neighbours per molecule)")
     ax.set_ylabel("Fraction of cliffs irreducible")
     ax.set_ylim(0, 1)
     ax.set_title(title, fontsize=10)
@@ -292,7 +315,7 @@ def calculate_cliff_irreducibility(
     results_dir: Path,
     activity_threshold: float,
     *,
-    scale_percentiles=DEFAULT_SCALE_PERCENTILES,
+    scale_degrees=DEFAULT_SCALE_DEGREES,
     barrier_levels=DEFAULT_BARRIER_LEVELS,
 ) -> dict:
     """
@@ -304,8 +327,7 @@ def calculate_cliff_irreducibility(
         results_dir: Directory to write results into (cliff_irreducibility/).
         activity_threshold: Activity difference at which a pair counts as a cliff. Also used as
             the strictest barrier level.
-        scale_percentiles: Structural scales to sample, as percentiles of the configuration's own
-            distance distribution.
+        scale_degrees: Structural scales to sample, as the graph's mean degree.
         barrier_levels: Activity steps a detour may not avoid.
 
     Returns:
@@ -334,7 +356,7 @@ def calculate_cliff_irreducibility(
         progress.update(task, advance=1, description="  Sweeping structural scales...")
 
         curve = irreducibility_curve(dist, dpa, rows, cols, n, activity_threshold,
-                                     scale_percentiles, barrier_levels)
+                                     scale_degrees, barrier_levels)
         half = half_dissolution_scales(curve, levels)
         progress.update(task, advance=1, description="  H0 of the structural filtration...")
 
@@ -354,7 +376,7 @@ def calculate_cliff_irreducibility(
     metadata = {
         "activity_threshold": activity_threshold,
         "barrier_levels": list(levels),
-        "scale_percentiles": list(scale_percentiles),
+        "scale_degrees": list(scale_degrees),
         "n_compounds": n,
         "n_compounds_in_any_cliff": int(cliff_any.sum()),
         "n_pairs_usable": int(usable.sum()),
@@ -380,8 +402,8 @@ def calculate_cliff_irreducibility(
         f"{int(cliff_any.sum())} molecules in at least one cliff"
     )
     for level in levels:
-        pct = (half.get(f"{level:g}") or {}).get("percentile")
-        shown = f"{pct:.3g}th pct" if pct else "outside the sampled range"
+        deg = (half.get(f"{level:g}") or {}).get("degree")
+        shown = f"degree {deg:.3g}" if deg else "outside the sampled range"
         console.print(f"  half-dissolution, barrier >= {level:g}: {shown}")
     console.print(f"[green]  ✓ Results saved to: {out_dir}[/green]")
 

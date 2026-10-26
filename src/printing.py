@@ -712,15 +712,15 @@ def create_cliff_irreducibility_summary_markdown(results_dir: Path) -> str:
         f"cliff pairs: {summary.get('n_cliff_pairs_total', 'N/A'):,}",
         "",
         "### Half-dissolution scale",
-        "Structural scale at which half of the cliffs become reducible.",
+        "Mean degree at which half of the cliffs become reducible.",
         "",
-        "| Barrier level | Percentile | Scaled distance |",
-        "|---------------|------------|-----------------|",
+        "| Barrier level | Mean degree | Scaled distance |",
+        "|---------------|-------------|-----------------|",
     ])
     half = summary.get("half_dissolution") or {}
     for lvl in levels:
         entry = half.get(f"{lvl:g}") or {}
-        pct, scale = entry.get("percentile"), entry.get("scale")
+        pct, scale = entry.get("degree"), entry.get("scale")
         if pct is None:
             note = entry.get("outside_sampled_range")
             cells = [f"stays {note} 0.5" if note else "—", "—"]
@@ -733,7 +733,7 @@ def create_cliff_irreducibility_summary_markdown(results_dir: Path) -> str:
     if curve_file.exists():
         curve = pd.read_csv(curve_file)
         frac_cols = [c for c in curve.columns if c.startswith("fraction_irreducible_")]
-        headers = ["Percentile", "Scaled distance", "Cliff pairs"] + [
+        headers = ["Mean degree", "Scaled distance", "Cliff pairs"] + [
             ">= " + c.rsplit("_", 1)[-1] for c in frac_cols
         ]
         lines.extend([
@@ -743,7 +743,7 @@ def create_cliff_irreducibility_summary_markdown(results_dir: Path) -> str:
             "|" + "|".join(["---"] * len(headers)) + "|",
         ])
         for _, row in curve.iterrows():
-            cells = [format_stat(row["percentile"]), format_stat(row["scale"]),
+            cells = [format_stat(row["degree"]), format_stat(row["scale"]),
                      f"{int(row['n_cliff_pairs']):,}"]
             cells += [format_stat(row[c]) if pd.notna(row[c]) else "—" for c in frac_cols]
             lines.append("| " + " | ".join(cells) + " |")
